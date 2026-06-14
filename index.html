@@ -3,15 +3,20 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>HB Research Assistant — Corpus Search</title>
+  <title>HB Research Assistant</title>
   <script src="https://cdn.tailwindcss.com"></script>
   <style>
     .abstract-excerpt { display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
     .card-expanded .abstract-excerpt { display: block; -webkit-line-clamp: unset; }
     .fade-in { animation: fadeIn 0.15s ease-in; }
     @keyframes fadeIn { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }
-    .spinner { border: 2px solid #e5e7eb; border-top-color: #6366f1; border-radius: 50%; width: 20px; height: 20px; animation: spin 0.7s linear infinite; display: inline-block; }
+    .spinner { border: 2px solid #e5e7eb; border-top-color: #6366f1; border-radius: 50%; width: 18px; height: 18px; animation: spin 0.7s linear infinite; display: inline-block; flex-shrink: 0; }
     @keyframes spin { to { transform: rotate(360deg); } }
+    sup a { font-size: 0.65em; vertical-align: super; text-decoration: none; }
+    sup a:hover { text-decoration: underline; }
+    .prose-answer p { margin-bottom: 0.75em; }
+    .prose-answer p:last-child { margin-bottom: 0; }
+    .scroll-mt-ref { scroll-margin-top: 8px; }
   </style>
   <script>
     tailwind.config = {
@@ -47,71 +52,164 @@
     </div>
   </header>
 
-  <!-- Search area -->
-  <div class="bg-white border-b border-gray-100">
-    <div class="max-w-5xl mx-auto px-4 py-5 space-y-3">
-      <!-- Search bar -->
-      <div class="relative">
-        <svg class="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-        </svg>
-        <input
-          id="search-input"
-          type="text"
-          placeholder="Search titles and abstracts… (e.g. compassion, mindfulness, Yinshun)"
-          class="w-full pl-10 pr-4 py-3 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-brand focus:border-transparent transition"
-          autocomplete="off"
-        />
-      </div>
-
-      <!-- Filters -->
-      <div class="flex flex-wrap gap-3 items-center">
-        <div class="flex items-center gap-2">
-          <label class="text-xs font-medium text-gray-500 whitespace-nowrap">Year from</label>
-          <input id="year-from" type="number" min="1990" max="2030" placeholder="2000"
-            class="w-24 px-2 py-1.5 text-sm border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-brand" />
-        </div>
-        <div class="flex items-center gap-2">
-          <label class="text-xs font-medium text-gray-500">to</label>
-          <input id="year-to" type="number" min="1990" max="2030" placeholder="2025"
-            class="w-24 px-2 py-1.5 text-sm border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-brand" />
-        </div>
-        <div class="flex items-center gap-2">
-          <label class="text-xs font-medium text-gray-500">Type</label>
-          <select id="type-filter" class="px-2 py-1.5 text-sm border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-brand bg-white">
-            <option value="">All types</option>
-          </select>
-        </div>
-        <button id="clear-btn" onclick="clearFilters()"
-          class="ml-auto text-xs text-brand hover:text-brand-dark font-medium hidden">
-          Clear all
-        </button>
-      </div>
+  <!-- Tab navigation -->
+  <div class="bg-white border-b border-gray-200">
+    <div class="max-w-5xl mx-auto px-4 flex gap-0">
+      <button id="tab-btn-search" onclick="switchTab('search')"
+        class="px-5 py-3 text-sm font-medium border-b-2 border-brand text-brand -mb-px transition-colors">
+        Search
+      </button>
+      <button id="tab-btn-qa" onclick="switchTab('qa')"
+        class="px-5 py-3 text-sm font-medium border-b-2 border-transparent text-gray-500 hover:text-gray-700 -mb-px transition-colors">
+        Q&amp;A Chat
+      </button>
     </div>
   </div>
 
-  <!-- Results -->
-  <main class="max-w-5xl mx-auto px-4 py-6">
-    <!-- Status bar -->
-    <div class="flex items-center justify-between mb-4">
-      <p id="result-count" class="text-sm text-gray-500"></p>
-      <div id="loading-spinner" class="hidden"><span class="spinner"></span></div>
+  <!-- ═══════════════════════════════════════════════════════════════════════ -->
+  <!-- Search tab                                                             -->
+  <!-- ═══════════════════════════════════════════════════════════════════════ -->
+  <div id="tab-search">
+
+    <!-- Search area -->
+    <div class="bg-white border-b border-gray-100">
+      <div class="max-w-5xl mx-auto px-4 py-5 space-y-3">
+        <div class="relative">
+          <svg class="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+          </svg>
+          <input
+            id="search-input"
+            type="text"
+            placeholder="Search titles and abstracts… (e.g. compassion, mindfulness, Yinshun)"
+            class="w-full pl-10 pr-4 py-3 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-brand focus:border-transparent transition"
+            autocomplete="off"
+          />
+        </div>
+        <div class="flex flex-wrap gap-3 items-center">
+          <div class="flex items-center gap-2">
+            <label class="text-xs font-medium text-gray-500 whitespace-nowrap">Year from</label>
+            <input id="year-from" type="number" min="1990" max="2030" placeholder="2000"
+              class="w-24 px-2 py-1.5 text-sm border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-brand" />
+          </div>
+          <div class="flex items-center gap-2">
+            <label class="text-xs font-medium text-gray-500">to</label>
+            <input id="year-to" type="number" min="1990" max="2030" placeholder="2025"
+              class="w-24 px-2 py-1.5 text-sm border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-brand" />
+          </div>
+          <div class="flex items-center gap-2">
+            <label class="text-xs font-medium text-gray-500">Type</label>
+            <select id="type-filter" class="px-2 py-1.5 text-sm border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-brand bg-white">
+              <option value="">All types</option>
+            </select>
+          </div>
+          <button id="clear-btn" onclick="clearFilters()"
+            class="ml-auto text-xs text-brand hover:text-brand-dark font-medium hidden">
+            Clear all
+          </button>
+        </div>
+      </div>
     </div>
 
-    <!-- Result list -->
-    <div id="results" class="space-y-3"></div>
+    <!-- Results -->
+    <main class="max-w-5xl mx-auto px-4 py-6">
+      <div class="flex items-center justify-between mb-4">
+        <p id="result-count" class="text-sm text-gray-500"></p>
+        <div id="loading-spinner" class="hidden"><span class="spinner"></span></div>
+      </div>
+      <div id="results" class="space-y-3"></div>
+      <div id="pagination" class="mt-8 flex justify-center gap-2"></div>
+    </main>
 
-    <!-- Pagination -->
-    <div id="pagination" class="mt-8 flex justify-center gap-2"></div>
-  </main>
+  </div><!-- /tab-search -->
+
+  <!-- ═══════════════════════════════════════════════════════════════════════ -->
+  <!-- Q&A Chat tab                                                           -->
+  <!-- ═══════════════════════════════════════════════════════════════════════ -->
+  <div id="tab-qa" class="hidden">
+    <div class="max-w-3xl mx-auto px-4 py-6 space-y-4">
+
+      <!-- Intro hint (shown until first message) -->
+      <div id="chat-intro" class="bg-indigo-50 border border-indigo-100 rounded-xl p-5 text-sm text-indigo-800 leading-relaxed">
+        <p class="font-medium mb-1">Ask a research question about Humanistic Buddhism</p>
+        <p class="text-indigo-600 text-xs">Every response is grounded in the HB corpus and includes inline citations. Up to 5 turns per conversation.</p>
+        <p class="mt-2 text-xs text-indigo-500">Try: <em>"What does HB scholarship say about compassion and social action?"</em></p>
+      </div>
+
+      <!-- Conversation thread -->
+      <div id="chat-thread" class="space-y-5"></div>
+
+      <!-- Input area -->
+      <div id="chat-input-area" class="bg-white border border-gray-200 rounded-xl shadow-sm p-4">
+        <div class="flex gap-3 items-end">
+          <textarea
+            id="chat-input"
+            rows="3"
+            placeholder="Ask a research question…"
+            class="flex-1 resize-none border border-gray-300 rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-brand focus:border-transparent transition leading-relaxed"
+          ></textarea>
+          <div class="flex flex-col items-center gap-2 flex-shrink-0">
+            <button id="chat-send-btn" onclick="sendChat()"
+              class="bg-brand text-white px-4 py-2.5 rounded-lg text-sm font-medium hover:bg-brand-dark transition-colors disabled:opacity-40 disabled:cursor-not-allowed">
+              Send
+            </button>
+          </div>
+        </div>
+        <div class="flex items-center justify-between mt-2 px-0.5">
+          <p id="turn-counter" class="text-xs text-gray-400">Turn 1 of 5</p>
+          <button onclick="newConversation()" class="text-xs text-brand hover:underline">New conversation</button>
+        </div>
+      </div>
+
+      <!-- Turn limit reached -->
+      <div id="chat-limit-msg" class="hidden bg-amber-50 border border-amber-200 rounded-xl p-5 text-center">
+        <p class="text-sm text-amber-800 mb-3">You've reached the 5-turn limit for this conversation.</p>
+        <button onclick="newConversation()"
+          class="bg-brand text-white px-5 py-2 rounded-lg text-sm font-medium hover:bg-brand-dark transition-colors">
+          Start new conversation
+        </button>
+      </div>
+
+    </div>
+  </div><!-- /tab-qa -->
 
   <script>
+    // ═══════════════════════════════════════════════════════════════════════
+    // Shared helpers
+    // ═══════════════════════════════════════════════════════════════════════
     const API = '';
+
+    function escHtml(str) {
+      if (!str) return '';
+      return String(str)
+        .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+    }
+    function escAttr(str) { return escHtml(str); }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // Tab navigation
+    // ═══════════════════════════════════════════════════════════════════════
+    function switchTab(tab) {
+      const isSearch = tab === 'search';
+      document.getElementById('tab-search').classList.toggle('hidden', !isSearch);
+      document.getElementById('tab-qa').classList.toggle('hidden', isSearch);
+
+      const btnSearch = document.getElementById('tab-btn-search');
+      const btnQa = document.getElementById('tab-btn-qa');
+      btnSearch.className = 'px-5 py-3 text-sm font-medium border-b-2 -mb-px transition-colors ' +
+        (isSearch ? 'border-brand text-brand' : 'border-transparent text-gray-500 hover:text-gray-700');
+      btnQa.className = 'px-5 py-3 text-sm font-medium border-b-2 -mb-px transition-colors ' +
+        (!isSearch ? 'border-brand text-brand' : 'border-transparent text-gray-500 hover:text-gray-700');
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // Search state & logic
+    // ═══════════════════════════════════════════════════════════════════════
     let state = { q: '', yearFrom: '', yearTo: '', type: '', page: 1, total: 0, perPage: 20 };
     let debounceTimer = null;
     let corpusTotal = 0;
 
-    // ── Init ────────────────────────────────────────────────────────────────────
     async function init() {
       await Promise.all([loadStats(), loadTypes()]);
       await doSearch();
@@ -137,7 +235,6 @@
       });
     }
 
-    // ── Search ──────────────────────────────────────────────────────────────────
     async function doSearch() {
       showSpinner(true);
       const params = new URLSearchParams({ page: state.page, per_page: state.perPage });
@@ -186,13 +283,10 @@
       document.getElementById('clear-btn').classList.toggle('hidden', !hasFilter);
     }
 
-    // ── Render ──────────────────────────────────────────────────────────────────
+    // ── Render search results ────────────────────────────────────────────────
     function renderCount(total, page, perPage) {
       const el = document.getElementById('result-count');
-      if (total === 0) {
-        el.textContent = 'No entries found.';
-        return;
-      }
+      if (total === 0) { el.textContent = 'No entries found.'; return; }
       const start = (page - 1) * perPage + 1;
       const end = Math.min(page * perPage, total);
       const label = state.q || state.yearFrom || state.yearTo || state.type
@@ -261,7 +355,6 @@
               </button>
             ` : ''}
           </div>
-
           ${hasAbstract ? `
             <div id="${id}-body" class="mt-3 hidden">
               <p class="text-sm text-gray-700 leading-relaxed">${escHtml(e.abstract)}</p>
@@ -291,7 +384,7 @@
       chevron.style.transform = open ? '' : 'rotate(180deg)';
     }
 
-    // ── Pagination ──────────────────────────────────────────────────────────────
+    // ── Pagination ───────────────────────────────────────────────────────────
     function renderPagination(total, page, perPage) {
       const pages = Math.ceil(total / perPage);
       if (pages <= 1) { document.getElementById('pagination').innerHTML = ''; return; }
@@ -303,7 +396,6 @@
       const disabled = btnBase + 'bg-white text-gray-300 border-gray-200 cursor-not-allowed';
 
       html += `<button class="${page === 1 ? disabled : inactive}" onclick="goPage(${page-1})" ${page===1?'disabled':''}>‹ Prev</button>`;
-
       const range = pageRange(page, pages);
       range.forEach(p => {
         if (p === '…') {
@@ -312,7 +404,6 @@
           html += `<button class="${p === page ? active : inactive}" onclick="goPage(${p})">${p}</button>`;
         }
       });
-
       html += `<button class="${page === pages ? disabled : inactive}" onclick="goPage(${page+1})" ${page===pages?'disabled':''}>Next ›</button>`;
       container.innerHTML = html;
     }
@@ -334,21 +425,11 @@
       window.scrollTo({ top: 0, behavior: 'smooth' });
     }
 
-    // ── Helpers ──────────────────────────────────────────────────────────────────
     function showSpinner(on) {
       document.getElementById('loading-spinner').classList.toggle('hidden', !on);
     }
 
-    function escHtml(str) {
-      if (!str) return '';
-      return String(str)
-        .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
-        .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
-    }
-
-    function escAttr(str) { return escHtml(str); }
-
-    // ── Event listeners ──────────────────────────────────────────────────────────
+    // ── Search event listeners ───────────────────────────────────────────────
     document.getElementById('search-input').addEventListener('input', debounceSearch);
     document.getElementById('search-input').addEventListener('keydown', e => {
       if (e.key === 'Enter') { clearTimeout(debounceTimer); triggerSearch(); }
@@ -357,6 +438,245 @@
     document.getElementById('year-to').addEventListener('change', triggerSearch);
     document.getElementById('type-filter').addEventListener('change', triggerSearch);
 
+    // ═══════════════════════════════════════════════════════════════════════
+    // Q&A Chat
+    // ═══════════════════════════════════════════════════════════════════════
+    let chatHistory = [];
+    let turnCount = 0;
+    let msgIdCounter = 0;
+    const MAX_TURNS = 5;
+
+    async function sendChat() {
+      const input = document.getElementById('chat-input');
+      const message = input.value.trim();
+      if (!message || turnCount >= MAX_TURNS) return;
+
+      // Hide intro hint after first send
+      const intro = document.getElementById('chat-intro');
+      if (intro) intro.classList.add('hidden');
+
+      const msgId = ++msgIdCounter;
+      appendUserMessage(message, msgId);
+      input.value = '';
+      setChatLoading(true);
+      showTypingIndicator();
+
+      const historySnapshot = [...chatHistory];
+
+      try {
+        const res = await fetch('/api/chat', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ message, history: historySnapshot }),
+        });
+
+        removeTypingIndicator();
+
+        if (!res.ok) {
+          const err = await res.json().catch(() => ({}));
+          appendErrorMessage(err.error || `Server error (${res.status}). Please try again.`);
+          return;
+        }
+
+        const data = await res.json();
+        chatHistory.push({ role: 'user', content: message });
+        chatHistory.push({ role: 'model', content: data.answer });
+        turnCount++;
+        appendAIMessage(data, msgId);
+        updateTurnUI();
+
+      } catch (e) {
+        removeTypingIndicator();
+        appendErrorMessage('Network error. Please check your connection and try again.');
+      } finally {
+        setChatLoading(false);
+      }
+    }
+
+    function appendUserMessage(text, msgId) {
+      const thread = document.getElementById('chat-thread');
+      const div = document.createElement('div');
+      div.className = 'flex justify-end fade-in';
+      div.innerHTML = `
+        <div class="bg-brand text-white rounded-2xl rounded-tr-sm px-4 py-3 max-w-xl text-sm leading-relaxed shadow-sm">
+          ${escHtml(text)}
+        </div>`;
+      thread.appendChild(div);
+      div.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    }
+
+    function showTypingIndicator() {
+      const thread = document.getElementById('chat-thread');
+      const div = document.createElement('div');
+      div.id = 'typing-indicator';
+      div.className = 'fade-in';
+      div.innerHTML = `
+        <div class="inline-flex items-center gap-2.5 bg-white border border-gray-200 rounded-2xl rounded-tl-sm px-4 py-3 shadow-sm">
+          <span class="spinner"></span>
+          <span class="text-sm text-gray-400">Searching corpus and composing response…</span>
+        </div>`;
+      thread.appendChild(div);
+      div.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    }
+
+    function removeTypingIndicator() {
+      document.getElementById('typing-indicator')?.remove();
+    }
+
+    function parseCitationsToHtml(text, msgId) {
+      // Escape HTML first, then replace [N] with superscript links
+      return escHtml(text)
+        .replace(/\[(\d+)\]/g, (_, n) =>
+          `<sup><a href="#chat-ref-${msgId}-${n}" class="text-brand-light hover:text-brand font-semibold">[${n}]</a></sup>`
+        )
+        // Wrap double-newlines as paragraph breaks
+        .replace(/\n\n+/g, '</p><p class="mt-3">')
+        .replace(/\n/g, '<br>');
+    }
+
+    function appendAIMessage(data, msgId) {
+      const thread = document.getElementById('chat-thread');
+      const div = document.createElement('div');
+      div.className = 'fade-in';
+
+      const answerHtml = parseCitationsToHtml(data.answer, msgId);
+      const refCount = data.citations.length;
+      const refsHtml = data.citations.map(c => renderCitationEntry(c, msgId)).join('');
+
+      div.innerHTML = `
+        <div class="bg-white border border-gray-200 rounded-2xl rounded-tl-sm p-5 shadow-sm">
+          <div class="text-sm text-gray-800 leading-relaxed prose-answer">
+            <p>${answerHtml}</p>
+          </div>
+          <p class="text-xs text-gray-400 mt-3 pt-3 border-t border-gray-100">
+            Based on ${data.sources_count} entries from the HB corpus
+          </p>
+          ${refCount > 0 ? `
+            <div class="mt-1">
+              <button onclick="toggleRefs('refs-${msgId}')"
+                class="flex items-center gap-1 text-xs font-medium text-gray-500 hover:text-brand py-1 transition-colors">
+                <svg id="refs-${msgId}-chevron" class="w-3.5 h-3.5 transition-transform duration-200"
+                  fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/>
+                </svg>
+                References (${refCount})
+              </button>
+              <div id="refs-${msgId}" class="hidden mt-2 space-y-3 pl-1 border-l-2 border-gray-100">
+                ${refsHtml}
+              </div>
+            </div>
+          ` : ''}
+        </div>`;
+
+      thread.appendChild(div);
+      div.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    }
+
+    function renderCitationEntry(c, msgId) {
+      const e = c.entry;
+      const n = c.number;
+      const refId = `chat-ref-${msgId}-${n}`;
+      const author = e.author_display || 'Unknown Author';
+      const year = e.year || 'n.d.';
+      const title = e.title || 'Untitled';
+      const venue = e.journal || e.book_title || e.publisher || '';
+      const hasAbstract = e.abstract && e.abstract.trim();
+      const hasUrl = e.url && e.url.trim();
+
+      return `
+        <div id="${refId}" class="flex gap-2.5 text-xs scroll-mt-ref pl-2">
+          <span class="flex-shrink-0 font-semibold text-brand w-6 pt-0.5">[${n}]</span>
+          <div class="flex-1 min-w-0">
+            <p class="text-gray-800 font-medium leading-snug">${escHtml(title)}</p>
+            <p class="text-gray-500 mt-0.5">
+              ${escHtml(author)} · ${year}${venue ? ' · <em>' + escHtml(venue) + '</em>' : ''}
+            </p>
+            <div class="flex gap-3 mt-1">
+              ${hasAbstract ? `
+                <button onclick="toggleRefDetail('${refId}-detail')"
+                  class="text-brand hover:underline text-xs">Show abstract</button>
+              ` : ''}
+              ${hasUrl ? `
+                <a href="${escAttr(e.url)}" target="_blank" rel="noopener noreferrer"
+                  class="text-brand hover:underline text-xs">View source ↗</a>
+              ` : ''}
+            </div>
+            ${hasAbstract ? `
+              <div id="${refId}-detail" class="hidden mt-1.5 text-gray-600 leading-relaxed text-xs bg-gray-50 rounded p-2.5">
+                ${escHtml(e.abstract)}
+              </div>
+            ` : ''}
+          </div>
+        </div>`;
+    }
+
+    function appendErrorMessage(text) {
+      const thread = document.getElementById('chat-thread');
+      const div = document.createElement('div');
+      div.className = 'fade-in';
+      div.innerHTML = `
+        <div class="bg-red-50 border border-red-200 rounded-xl p-4 text-sm text-red-700">
+          ${escHtml(text)}
+        </div>`;
+      thread.appendChild(div);
+      div.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    }
+
+    function toggleRefs(id) {
+      const el = document.getElementById(id);
+      const chevron = document.getElementById(`${id}-chevron`);
+      const hidden = el.classList.toggle('hidden');
+      if (chevron) chevron.style.transform = hidden ? '' : 'rotate(180deg)';
+    }
+
+    function toggleRefDetail(id) {
+      const el = document.getElementById(id);
+      el.classList.toggle('hidden');
+      const btn = el.previousElementSibling;
+      if (btn && btn.tagName === 'BUTTON') {
+        btn.textContent = el.classList.contains('hidden') ? 'Show abstract' : 'Hide abstract';
+      }
+    }
+
+    function setChatLoading(on) {
+      document.getElementById('chat-send-btn').disabled = on;
+      document.getElementById('chat-input').disabled = on;
+    }
+
+    function updateTurnUI() {
+      if (turnCount >= MAX_TURNS) {
+        document.getElementById('chat-input-area').classList.add('hidden');
+        document.getElementById('chat-limit-msg').classList.remove('hidden');
+      } else {
+        document.getElementById('turn-counter').textContent = `Turn ${turnCount + 1} of ${MAX_TURNS}`;
+      }
+    }
+
+    function newConversation() {
+      chatHistory = [];
+      turnCount = 0;
+      msgIdCounter = 0;
+      document.getElementById('chat-thread').innerHTML = '';
+      document.getElementById('chat-input-area').classList.remove('hidden');
+      document.getElementById('chat-limit-msg').classList.add('hidden');
+      document.getElementById('chat-input').value = '';
+      document.getElementById('turn-counter').textContent = `Turn 1 of ${MAX_TURNS}`;
+      // Restore intro hint
+      const intro = document.getElementById('chat-intro');
+      if (intro) intro.classList.remove('hidden');
+    }
+
+    // Send on Enter (Shift+Enter = new line)
+    document.getElementById('chat-input').addEventListener('keydown', e => {
+      if (e.key === 'Enter' && !e.shiftKey) {
+        e.preventDefault();
+        sendChat();
+      }
+    });
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // Boot
+    // ═══════════════════════════════════════════════════════════════════════
     init();
   </script>
 </body>

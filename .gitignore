@@ -11,3 +11,8 @@ venv/
 env/
 .DS_Store
 Thumbs.db
+
+# local junk / scratch
+logs.*.log
+*.zip
+vis2021_09c_extracted/
