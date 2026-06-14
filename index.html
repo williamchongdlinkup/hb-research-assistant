@@ -1,0 +1,363 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>HB Research Assistant — Corpus Search</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    .abstract-excerpt { display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+    .card-expanded .abstract-excerpt { display: block; -webkit-line-clamp: unset; }
+    .fade-in { animation: fadeIn 0.15s ease-in; }
+    @keyframes fadeIn { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }
+    .spinner { border: 2px solid #e5e7eb; border-top-color: #6366f1; border-radius: 50%; width: 20px; height: 20px; animation: spin 0.7s linear infinite; display: inline-block; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+  </style>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: {
+            brand: { DEFAULT: '#4f46e5', light: '#818cf8', dark: '#3730a3' }
+          }
+        }
+      }
+    }
+  </script>
+</head>
+<body class="bg-gray-50 text-gray-900 min-h-screen font-sans">
+
+  <!-- Header -->
+  <header class="bg-white border-b border-gray-200 shadow-sm sticky top-0 z-10">
+    <div class="max-w-5xl mx-auto px-4 py-4 flex items-center gap-3">
+      <div class="flex-shrink-0">
+        <div class="w-8 h-8 rounded-lg bg-brand flex items-center justify-center">
+          <svg class="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.746 0 3.332.477 4.5 1.253v13C19.832 18.477 18.246 18 16.5 18c-1.746 0-3.332.477-4.5 1.253" />
+          </svg>
+        </div>
+      </div>
+      <div>
+        <h1 class="text-lg font-semibold leading-tight text-gray-900">HB Research Assistant</h1>
+        <p class="text-xs text-gray-500">Humanistic Buddhism Research Bibliography · Nan Tien Institute</p>
+      </div>
+      <div class="ml-auto text-right">
+        <p id="corpus-count" class="text-xs text-gray-400">Loading corpus…</p>
+      </div>
+    </div>
+  </header>
+
+  <!-- Search area -->
+  <div class="bg-white border-b border-gray-100">
+    <div class="max-w-5xl mx-auto px-4 py-5 space-y-3">
+      <!-- Search bar -->
+      <div class="relative">
+        <svg class="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+        </svg>
+        <input
+          id="search-input"
+          type="text"
+          placeholder="Search titles and abstracts… (e.g. compassion, mindfulness, Yinshun)"
+          class="w-full pl-10 pr-4 py-3 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-brand focus:border-transparent transition"
+          autocomplete="off"
+        />
+      </div>
+
+      <!-- Filters -->
+      <div class="flex flex-wrap gap-3 items-center">
+        <div class="flex items-center gap-2">
+          <label class="text-xs font-medium text-gray-500 whitespace-nowrap">Year from</label>
+          <input id="year-from" type="number" min="1990" max="2030" placeholder="2000"
+            class="w-24 px-2 py-1.5 text-sm border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-brand" />
+        </div>
+        <div class="flex items-center gap-2">
+          <label class="text-xs font-medium text-gray-500">to</label>
+          <input id="year-to" type="number" min="1990" max="2030" placeholder="2025"
+            class="w-24 px-2 py-1.5 text-sm border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-brand" />
+        </div>
+        <div class="flex items-center gap-2">
+          <label class="text-xs font-medium text-gray-500">Type</label>
+          <select id="type-filter" class="px-2 py-1.5 text-sm border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-brand bg-white">
+            <option value="">All types</option>
+          </select>
+        </div>
+        <button id="clear-btn" onclick="clearFilters()"
+          class="ml-auto text-xs text-brand hover:text-brand-dark font-medium hidden">
+          Clear all
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Results -->
+  <main class="max-w-5xl mx-auto px-4 py-6">
+    <!-- Status bar -->
+    <div class="flex items-center justify-between mb-4">
+      <p id="result-count" class="text-sm text-gray-500"></p>
+      <div id="loading-spinner" class="hidden"><span class="spinner"></span></div>
+    </div>
+
+    <!-- Result list -->
+    <div id="results" class="space-y-3"></div>
+
+    <!-- Pagination -->
+    <div id="pagination" class="mt-8 flex justify-center gap-2"></div>
+  </main>
+
+  <script>
+    const API = '';
+    let state = { q: '', yearFrom: '', yearTo: '', type: '', page: 1, total: 0, perPage: 20 };
+    let debounceTimer = null;
+    let corpusTotal = 0;
+
+    // ── Init ────────────────────────────────────────────────────────────────────
+    async function init() {
+      await Promise.all([loadStats(), loadTypes()]);
+      await doSearch();
+    }
+
+    async function loadStats() {
+      const r = await fetch('/api/stats');
+      const d = await r.json();
+      corpusTotal = d.total;
+      document.getElementById('corpus-count').textContent =
+        `${d.total.toLocaleString()} entries · ${d.year_min}–${d.year_max}`;
+    }
+
+    async function loadTypes() {
+      const r = await fetch('/api/types');
+      const types = await r.json();
+      const sel = document.getElementById('type-filter');
+      types.forEach(t => {
+        const opt = document.createElement('option');
+        opt.value = t;
+        opt.textContent = t;
+        sel.appendChild(opt);
+      });
+    }
+
+    // ── Search ──────────────────────────────────────────────────────────────────
+    async function doSearch() {
+      showSpinner(true);
+      const params = new URLSearchParams({ page: state.page, per_page: state.perPage });
+      if (state.q) params.set('q', state.q);
+      if (state.yearFrom) params.set('year_from', state.yearFrom);
+      if (state.yearTo) params.set('year_to', state.yearTo);
+      if (state.type) params.set('type', state.type);
+
+      const r = await fetch(`/api/search?${params}`);
+      const data = await r.json();
+      state.total = data.total;
+      showSpinner(false);
+      renderResults(data.results);
+      renderCount(data.total, data.page, data.per_page);
+      renderPagination(data.total, data.page, data.per_page);
+    }
+
+    function triggerSearch() {
+      state.page = 1;
+      state.q = document.getElementById('search-input').value;
+      state.yearFrom = document.getElementById('year-from').value;
+      state.yearTo = document.getElementById('year-to').value;
+      state.type = document.getElementById('type-filter').value;
+      updateClearBtn();
+      doSearch();
+    }
+
+    function debounceSearch() {
+      clearTimeout(debounceTimer);
+      debounceTimer = setTimeout(triggerSearch, 350);
+    }
+
+    function clearFilters() {
+      document.getElementById('search-input').value = '';
+      document.getElementById('year-from').value = '';
+      document.getElementById('year-to').value = '';
+      document.getElementById('type-filter').value = '';
+      state.q = ''; state.yearFrom = ''; state.yearTo = ''; state.type = '';
+      updateClearBtn();
+      state.page = 1;
+      doSearch();
+    }
+
+    function updateClearBtn() {
+      const hasFilter = state.q || state.yearFrom || state.yearTo || state.type;
+      document.getElementById('clear-btn').classList.toggle('hidden', !hasFilter);
+    }
+
+    // ── Render ──────────────────────────────────────────────────────────────────
+    function renderCount(total, page, perPage) {
+      const el = document.getElementById('result-count');
+      if (total === 0) {
+        el.textContent = 'No entries found.';
+        return;
+      }
+      const start = (page - 1) * perPage + 1;
+      const end = Math.min(page * perPage, total);
+      const label = state.q || state.yearFrom || state.yearTo || state.type
+        ? `Showing ${start}–${end} of ${total.toLocaleString()} matching entries`
+        : `Showing ${start}–${end} of ${corpusTotal.toLocaleString()} entries`;
+      el.textContent = label;
+    }
+
+    function renderResults(results) {
+      const container = document.getElementById('results');
+      if (results.length === 0) {
+        container.innerHTML = `
+          <div class="text-center py-16 text-gray-400">
+            <svg class="mx-auto mb-3 w-10 h-10" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5"
+                d="M9.172 16.172a4 4 0 015.656 0M9 10h.01M15 10h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+            </svg>
+            <p class="text-sm">No entries matched your search.</p>
+            <p class="text-xs mt-1">Try different keywords or broaden the year range.</p>
+          </div>`;
+        return;
+      }
+      container.innerHTML = results.map(e => renderCard(e)).join('');
+    }
+
+    const TYPE_COLORS = {
+      'Journal Article': 'bg-blue-100 text-blue-700',
+      'Book': 'bg-emerald-100 text-emerald-700',
+      'Book Chapter': 'bg-teal-100 text-teal-700',
+      'Conference Paper': 'bg-violet-100 text-violet-700',
+      'Paper': 'bg-violet-100 text-violet-700',
+      'Thesis': 'bg-orange-100 text-orange-700',
+    };
+
+    function typeColor(type) {
+      return TYPE_COLORS[type] || 'bg-gray-100 text-gray-600';
+    }
+
+    function renderCard(e) {
+      const id = `card-${e.serial_no}`;
+      const hasAbstract = e.abstract && e.abstract.trim();
+      const hasUrl = e.url && e.url.trim();
+      const venue = e.journal || e.book_title || e.publisher || '';
+      const venueHtml = venue
+        ? `<span class="text-gray-500 text-xs ml-1">· ${escHtml(venue)}</span>` : '';
+
+      return `
+        <article id="${id}" class="bg-white border border-gray-200 rounded-lg p-4 shadow-sm hover:shadow-md transition-shadow fade-in">
+          <div class="flex items-start justify-between gap-3">
+            <div class="flex-1 min-w-0">
+              <div class="flex flex-wrap items-center gap-2 mb-1">
+                ${e.type ? `<span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${typeColor(e.type)}">${escHtml(e.type)}</span>` : ''}
+                ${e.year ? `<span class="text-xs text-gray-400">${e.year}</span>` : ''}
+              </div>
+              <h2 class="text-sm font-semibold text-gray-900 leading-snug mb-1">${escHtml(e.title || '—')}</h2>
+              <p class="text-xs text-gray-500">
+                ${e.author_display ? escHtml(e.author_display) : '<em>No author listed</em>'}${venueHtml}
+              </p>
+            </div>
+            ${hasAbstract ? `
+              <button onclick="toggleCard('${id}')" aria-label="Expand entry"
+                class="flex-shrink-0 text-gray-400 hover:text-brand transition-colors mt-0.5">
+                <svg id="${id}-chevron" class="w-5 h-5 transition-transform duration-200" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" />
+                </svg>
+              </button>
+            ` : ''}
+          </div>
+
+          ${hasAbstract ? `
+            <div id="${id}-body" class="mt-3 hidden">
+              <p class="text-sm text-gray-700 leading-relaxed">${escHtml(e.abstract)}</p>
+              ${hasUrl ? `
+                <a href="${escAttr(e.url)}" target="_blank" rel="noopener noreferrer"
+                  class="inline-flex items-center gap-1 mt-3 text-xs text-brand hover:underline font-medium">
+                  View source
+                  <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                      d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
+                  </svg>
+                </a>
+              ` : ''}
+            </div>
+            <p id="${id}-excerpt" class="mt-2 text-sm text-gray-500 abstract-excerpt">${escHtml(e.abstract_excerpt)}</p>
+          ` : ''}
+        </article>`;
+    }
+
+    function toggleCard(id) {
+      const body = document.getElementById(`${id}-body`);
+      const excerpt = document.getElementById(`${id}-excerpt`);
+      const chevron = document.getElementById(`${id}-chevron`);
+      const open = !body.classList.contains('hidden');
+      body.classList.toggle('hidden', open);
+      if (excerpt) excerpt.classList.toggle('hidden', !open);
+      chevron.style.transform = open ? '' : 'rotate(180deg)';
+    }
+
+    // ── Pagination ──────────────────────────────────────────────────────────────
+    function renderPagination(total, page, perPage) {
+      const pages = Math.ceil(total / perPage);
+      if (pages <= 1) { document.getElementById('pagination').innerHTML = ''; return; }
+      const container = document.getElementById('pagination');
+      let html = '';
+      const btnBase = 'px-3 py-1.5 text-sm rounded border transition-colors ';
+      const active = btnBase + 'bg-brand text-white border-brand font-medium';
+      const inactive = btnBase + 'bg-white text-gray-600 border-gray-300 hover:bg-gray-50';
+      const disabled = btnBase + 'bg-white text-gray-300 border-gray-200 cursor-not-allowed';
+
+      html += `<button class="${page === 1 ? disabled : inactive}" onclick="goPage(${page-1})" ${page===1?'disabled':''}>‹ Prev</button>`;
+
+      const range = pageRange(page, pages);
+      range.forEach(p => {
+        if (p === '…') {
+          html += `<span class="px-2 py-1.5 text-sm text-gray-400">…</span>`;
+        } else {
+          html += `<button class="${p === page ? active : inactive}" onclick="goPage(${p})">${p}</button>`;
+        }
+      });
+
+      html += `<button class="${page === pages ? disabled : inactive}" onclick="goPage(${page+1})" ${page===pages?'disabled':''}>Next ›</button>`;
+      container.innerHTML = html;
+    }
+
+    function pageRange(current, total) {
+      if (total <= 7) return Array.from({length: total}, (_, i) => i + 1);
+      const pages = [];
+      pages.push(1);
+      if (current > 3) pages.push('…');
+      for (let p = Math.max(2, current - 1); p <= Math.min(total - 1, current + 1); p++) pages.push(p);
+      if (current < total - 2) pages.push('…');
+      pages.push(total);
+      return pages;
+    }
+
+    function goPage(p) {
+      state.page = p;
+      doSearch();
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    }
+
+    // ── Helpers ──────────────────────────────────────────────────────────────────
+    function showSpinner(on) {
+      document.getElementById('loading-spinner').classList.toggle('hidden', !on);
+    }
+
+    function escHtml(str) {
+      if (!str) return '';
+      return String(str)
+        .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+    }
+
+    function escAttr(str) { return escHtml(str); }
+
+    // ── Event listeners ──────────────────────────────────────────────────────────
+    document.getElementById('search-input').addEventListener('input', debounceSearch);
+    document.getElementById('search-input').addEventListener('keydown', e => {
+      if (e.key === 'Enter') { clearTimeout(debounceTimer); triggerSearch(); }
+    });
+    document.getElementById('year-from').addEventListener('change', triggerSearch);
+    document.getElementById('year-to').addEventListener('change', triggerSearch);
+    document.getElementById('type-filter').addEventListener('change', triggerSearch);
+
+    init();
+  </script>
+</body>
+</html>
