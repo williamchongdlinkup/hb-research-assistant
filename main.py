@@ -1,4 +1,6 @@
 import csv
+import json
+import logging
 import sqlite3
 import os
 import re
@@ -11,10 +13,11 @@ from google.genai import types as genai_types
 from dotenv import load_dotenv
 from fastapi import FastAPI, Query
 from fastapi.responses import HTMLResponse, JSONResponse
-from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 load_dotenv()
+
+logger = logging.getLogger("hb_research_assistant")
 
 CSV_PATH = Path(__file__).parent / "data" / "HBBiblio_Dec2025_Complete.csv"
 ABSTRACT_EXCERPT_LEN = 250
@@ -36,6 +39,10 @@ class ChatMessage(BaseModel):
 class ChatRequest(BaseModel):
     message: str
     history: list[ChatMessage] = []
+
+
+class AuditRequest(BaseModel):
+    bibliography: str
 
 
 def _build_db() -> sqlite3.Connection:
@@ -398,8 +405,9 @@ def chat(req: ChatRequest):
         )
         response = chat_session.send_message(req.message)
         answer = response.text
-    except Exception as exc:
-        return JSONResponse(status_code=502, content={"error": f"AI generation failed: {exc}"})
+    except Exception:
+        logger.exception("Gemini chat generation failed")
+        return JSONResponse(status_code=502, content={"error": "AI generation failed. Please try again."})
 
     used_nums = sorted(set(int(n) for n in re.findall(r"\[(\d+)\]", answer)))
     citations = [
@@ -409,3 +417,179 @@ def chat(req: ChatRequest):
     ]
 
     return {"answer": answer, "citations": citations, "sources_count": sources_count}
+
+
+# ── Reference Audit ──────────────────────────────────────────────────────────
+
+_AUDIT_SYSTEM_PROMPT = """\
+You are a reference-audit assistant for the Humanistic Buddhism (HB) research \
+bibliography maintained by Nan Tien Institute. You receive (A) a numbered list of \
+HB corpus entries retrieved as potentially relevant, and (B) a bibliography \
+pasted by a user in any citation format.
+
+Classify using ONLY the numbered corpus entries provided. Never invent entries \
+and never use an index number that is not in the list.
+
+Return STRICT JSON ONLY (no markdown fences, no commentary) with exactly this shape:
+{{
+  "verified":     [{{"index": <int>, "confidence": "high"|"probable", "reason": "<=15 words"}}],
+  "not_in_corpus":[{{"citation": "<pasted citation trimmed to title, author, year>", "reason": "<=12 words"}}],
+  "missing":      [{{"index": <int>, "reason": "<=15 words"}}],
+  "suggested":    [{{"index": <int>, "reason": "<=15 words"}}]
+}}
+
+Definitions:
+- verified: a pasted citation that clearly refers to one of the numbered corpus \
+entries. Use "high" for a near-exact title+author match, "probable" for a likely \
+but imperfect match.
+- not_in_corpus: pasted citations that match none of the numbered entries. Most \
+general or non-HB citations belong here.
+- missing: up to 5 numbered corpus entries NOT cited in the pasted list that are \
+important to the bibliography's topic.
+- suggested: up to 5 other relevant numbered corpus entries not already counted \
+as verified or missing.
+
+Each index may appear in at most one of verified / missing / suggested. If the \
+pasted text contains no parseable citations, return all four arrays empty.
+"""
+
+
+def _parse_json(raw: str):
+    """Tolerantly parse a JSON object from a model response."""
+    if not raw:
+        return None
+    txt = raw.strip()
+    if txt.startswith("```"):
+        txt = re.sub(r"^```(?:json)?\s*", "", txt)
+        txt = re.sub(r"\s*```$", "", txt)
+    try:
+        return json.loads(txt)
+    except json.JSONDecodeError:
+        m = re.search(r"\{.*\}", txt, re.DOTALL)
+        if m:
+            try:
+                return json.loads(m.group(0))
+            except json.JSONDecodeError:
+                return None
+    return None
+
+
+def _retrieve_audit_pool(text: str, limit: int = 60) -> list[dict]:
+    """Retrieve a deduped, relevance-ranked pool of corpus entries for the whole
+    pasted bibliography — surfaces both cited HB entries (for matching) and
+    topically-related ones (for missing/suggested)."""
+    words = re.findall(r"\b[a-zA-Z]{3,}\b", text)
+    seen_terms: set[str] = set()
+    terms: list[str] = []
+    for w in words:
+        lw = w.lower()
+        if lw in _STOPWORDS or lw in seen_terms:
+            continue
+        seen_terms.add(lw)
+        terms.append(w)
+    terms = terms[:120]  # cap query size
+    if not terms:
+        return []
+    fts_query = " OR ".join(f'"{t}"' for t in terms)
+    try:
+        rows = _db.execute(
+            """
+            SELECT e.* FROM entries_fts f
+            JOIN entries e ON e.rowid = f.rowid
+            WHERE entries_fts MATCH ? ORDER BY rank LIMIT ?
+            """,
+            [fts_query, limit],
+        ).fetchall()
+    except sqlite3.OperationalError:
+        return _retrieve_for_query(text, limit)
+    return [_entry_to_dict(r) for r in rows]
+
+
+def _format_audit_pool(entries: list[dict]) -> str:
+    parts = []
+    for i, e in enumerate(entries, 1):
+        author = e.get("author_display") or "Unknown Author"
+        year = e.get("year") or "n.d."
+        title = e.get("title") or "Untitled"
+        venue = e.get("journal") or e.get("book_title") or e.get("publisher") or ""
+        excerpt = e.get("abstract_excerpt") or ""
+        line = f"[{i}] {author} ({year}). {title}."
+        if venue:
+            line += f" {venue}."
+        if excerpt:
+            line += f" — {excerpt}"
+        parts.append(line)
+    return "\n".join(parts)
+
+
+def _attach_entries(items, entries, seen, cap=None):
+    """Map model-returned {index, ...} items to full corpus entries, dropping
+    out-of-range or duplicate indices."""
+    out = []
+    if not isinstance(items, list):
+        return out
+    for it in items:
+        if not isinstance(it, dict):
+            continue
+        idx = it.get("index")
+        if not isinstance(idx, int) or not (1 <= idx <= len(entries)) or idx in seen:
+            continue
+        seen.add(idx)
+        out.append({**it, "entry": entries[idx - 1]})
+        if cap and len(out) >= cap:
+            break
+    return out
+
+
+@app.post("/api/audit")
+def audit(req: AuditRequest):
+    if not _gemini_client:
+        return JSONResponse(status_code=503, content={"error": "AI service not configured."})
+
+    bib = (req.bibliography or "").strip()
+    if not bib:
+        return {"verified": [], "not_in_corpus": [], "missing": [], "suggested": [], "pool_size": 0}
+
+    entries = _retrieve_audit_pool(bib, limit=60)
+    pool_text = _format_audit_pool(entries)
+    user_content = (
+        f"HB corpus entries ({len(entries)}):\n\n{pool_text}\n\n"
+        f"--- Pasted bibliography to audit ---\n\n{bib}"
+    )
+
+    try:
+        response = _gemini_client.models.generate_content(
+            model=GEMINI_MODEL,
+            contents=user_content,
+            config=genai_types.GenerateContentConfig(
+                system_instruction=_AUDIT_SYSTEM_PROMPT,
+                response_mime_type="application/json",
+                temperature=0.2,
+            ),
+        )
+        data = _parse_json(response.text)
+    except Exception:
+        logger.exception("Gemini audit generation failed")
+        return JSONResponse(status_code=502, content={"error": "AI analysis failed. Please try again."})
+
+    if not isinstance(data, dict):
+        logger.error("Audit response was not valid JSON")
+        return JSONResponse(status_code=502, content={"error": "Could not parse AI response. Please try again."})
+
+    seen: set[int] = set()
+    verified = _attach_entries(data.get("verified", []), entries, seen)
+    missing = _attach_entries(data.get("missing", []), entries, seen, cap=5)
+    suggested = _attach_entries(data.get("suggested", []), entries, seen, cap=5)
+    not_in_corpus = [
+        {"citation": str(it.get("citation", "")).strip(), "reason": str(it.get("reason", "")).strip()}
+        for it in (data.get("not_in_corpus") or [])
+        if isinstance(it, dict) and str(it.get("citation", "")).strip()
+    ]
+
+    return {
+        "verified": verified,
+        "not_in_corpus": not_in_corpus,
+        "missing": missing,
+        "suggested": suggested,
+        "pool_size": len(entries),
+    }

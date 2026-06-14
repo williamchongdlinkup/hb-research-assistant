@@ -63,6 +63,10 @@
         class="px-5 py-3 text-sm font-medium border-b-2 border-transparent text-gray-500 hover:text-gray-700 -mb-px transition-colors">
         Q&amp;A Chat
       </button>
+      <button id="tab-btn-audit" onclick="switchTab('audit')"
+        class="px-5 py-3 text-sm font-medium border-b-2 border-transparent text-gray-500 hover:text-gray-700 -mb-px transition-colors">
+        Reference Audit
+      </button>
     </div>
   </div>
 
@@ -173,6 +177,44 @@
     </div>
   </div><!-- /tab-qa -->
 
+  <!-- ═══════════════════════════════════════════════════════════════════════ -->
+  <!-- Reference Audit tab                                                     -->
+  <!-- ═══════════════════════════════════════════════════════════════════════ -->
+  <div id="tab-audit" class="hidden">
+    <div class="max-w-3xl mx-auto px-4 py-6 space-y-4">
+
+      <!-- Intro hint -->
+      <div class="bg-indigo-50 border border-indigo-100 rounded-xl p-5 text-sm text-indigo-800 leading-relaxed">
+        <p class="font-medium mb-1">Audit a bibliography against the HB corpus</p>
+        <p class="text-indigo-600 text-xs">Paste a reference list in any citation format. The audit shows which references are verified in the HB corpus, which fall outside it, and which key HB papers may be missing from your list.</p>
+      </div>
+
+      <!-- Input -->
+      <div class="bg-white border border-gray-200 rounded-xl shadow-sm p-4">
+        <textarea id="audit-input" rows="8"
+          placeholder="Paste a bibliography here — APA, Chicago, MLA, or any format…"
+          class="w-full resize-y border border-gray-300 rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-brand focus:border-transparent transition leading-relaxed"></textarea>
+        <div class="flex items-center justify-between mt-3">
+          <p class="text-xs text-gray-400">Results are not saved. Tip: Ctrl/⌘ + Enter to run.</p>
+          <button id="audit-btn" onclick="runAudit()"
+            class="bg-brand text-white px-5 py-2.5 rounded-lg text-sm font-medium hover:bg-brand-dark transition-colors disabled:opacity-40 disabled:cursor-not-allowed">
+            Audit
+          </button>
+        </div>
+      </div>
+
+      <!-- Loading -->
+      <div id="audit-loading" class="hidden bg-white border border-gray-200 rounded-xl p-6 text-center">
+        <span class="spinner"></span>
+        <p class="text-sm text-gray-400 mt-2">Matching references against the HB corpus…</p>
+      </div>
+
+      <!-- Results -->
+      <div id="audit-results" class="space-y-4"></div>
+
+    </div>
+  </div><!-- /tab-audit -->
+
   <script>
     // ═══════════════════════════════════════════════════════════════════════
     // Shared helpers
@@ -191,16 +233,12 @@
     // Tab navigation
     // ═══════════════════════════════════════════════════════════════════════
     function switchTab(tab) {
-      const isSearch = tab === 'search';
-      document.getElementById('tab-search').classList.toggle('hidden', !isSearch);
-      document.getElementById('tab-qa').classList.toggle('hidden', isSearch);
-
-      const btnSearch = document.getElementById('tab-btn-search');
-      const btnQa = document.getElementById('tab-btn-qa');
-      btnSearch.className = 'px-5 py-3 text-sm font-medium border-b-2 -mb-px transition-colors ' +
-        (isSearch ? 'border-brand text-brand' : 'border-transparent text-gray-500 hover:text-gray-700');
-      btnQa.className = 'px-5 py-3 text-sm font-medium border-b-2 -mb-px transition-colors ' +
-        (!isSearch ? 'border-brand text-brand' : 'border-transparent text-gray-500 hover:text-gray-700');
+      ['search', 'qa', 'audit'].forEach(t => {
+        document.getElementById('tab-' + t).classList.toggle('hidden', t !== tab);
+        document.getElementById('tab-btn-' + t).className =
+          'px-5 py-3 text-sm font-medium border-b-2 -mb-px transition-colors ' +
+          (t === tab ? 'border-brand text-brand' : 'border-transparent text-gray-500 hover:text-gray-700');
+      });
     }
 
     // ═══════════════════════════════════════════════════════════════════════
@@ -671,6 +709,156 @@
       if (e.key === 'Enter' && !e.shiftKey) {
         e.preventDefault();
         sendChat();
+      }
+    });
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // Reference Audit
+    // ═══════════════════════════════════════════════════════════════════════
+    let lastAuditApa = [];
+
+    async function runAudit() {
+      const bib = document.getElementById('audit-input').value.trim();
+      if (!bib) return;
+      const btn = document.getElementById('audit-btn');
+      btn.disabled = true;
+      document.getElementById('audit-results').innerHTML = '';
+      document.getElementById('audit-loading').classList.remove('hidden');
+
+      try {
+        const res = await fetch('/api/audit', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ bibliography: bib }),
+        });
+        document.getElementById('audit-loading').classList.add('hidden');
+        if (!res.ok) {
+          const err = await res.json().catch(() => ({}));
+          renderAuditError(err.error || `Server error (${res.status}). Please try again.`);
+          return;
+        }
+        renderAudit(await res.json());
+      } catch (e) {
+        document.getElementById('audit-loading').classList.add('hidden');
+        renderAuditError('Network error. Please check your connection and try again.');
+      } finally {
+        btn.disabled = false;
+      }
+    }
+
+    function renderAuditError(text) {
+      document.getElementById('audit-results').innerHTML =
+        `<div class="bg-red-50 border border-red-200 rounded-xl p-4 text-sm text-red-700">${escHtml(text)}</div>`;
+    }
+
+    function apaFromEntry(e) {
+      const author = e.author_display || 'Unknown Author';
+      const year = e.year || 'n.d.';
+      const title = e.title || 'Untitled';
+      const venue = e.journal || e.book_title || e.publisher || '';
+      let tail = '';
+      if (e.volume) { tail += `, ${e.volume}`; if (e.issue) tail += `(${e.issue})`; }
+      if (e.page_start) { tail += `, ${e.page_start}${e.page_end ? '–' + e.page_end : ''}`; }
+      let s = `${author} (${year}). ${title}.`;
+      if (venue) s += ` ${venue}${tail}.`;
+      return s.replace(/\s+/g, ' ').trim();
+    }
+
+    function renderAudit(data) {
+      const v = data.verified || [], nic = data.not_in_corpus || [],
+            miss = data.missing || [], sug = data.suggested || [];
+      lastAuditApa = [...miss, ...sug].map(it => apaFromEntry(it.entry || {}));
+
+      if (!v.length && !nic.length && !miss.length && !sug.length) {
+        renderAuditError('No citations could be parsed from the pasted text. Check the format and try again.');
+        return;
+      }
+
+      const summary = `
+        <div class="bg-white border border-gray-200 rounded-xl shadow-sm p-4 text-sm text-gray-600 flex flex-wrap gap-x-5 gap-y-1">
+          <span><span class="font-semibold text-emerald-600">${v.length}</span> verified</span>
+          <span><span class="font-semibold text-gray-500">${nic.length}</span> outside corpus</span>
+          <span><span class="font-semibold text-amber-600">${miss.length}</span> missing</span>
+          <span><span class="font-semibold text-indigo-600">${sug.length}</span> suggested</span>
+          <span class="ml-auto text-xs text-gray-400">Compared against ${data.pool_size} candidate HB entries</span>
+        </div>`;
+
+      const copyBtn = (miss.length + sug.length) > 0 ? `
+        <div class="flex justify-end">
+          <button onclick="copyAuditApa(this)"
+            class="text-xs bg-gray-100 hover:bg-gray-200 text-gray-700 px-3 py-2 rounded-lg font-medium transition-colors">
+            Copy suggestions as APA
+          </button>
+        </div>` : '';
+
+      const sections = [
+        auditSection('✅ Verified', 'In the HB corpus', v, 'entry'),
+        auditSection('⚠️ Missing', 'Key HB papers absent from your list', miss, 'entry'),
+        auditSection('💡 Suggested', 'Other relevant HB entries', sug, 'entry'),
+        auditSection('📄 Not in HB corpus', 'Your citations with no HB match', nic, 'plain'),
+      ].join('');
+
+      document.getElementById('audit-results').innerHTML = summary + copyBtn + sections;
+    }
+
+    function auditSection(title, subtitle, items, kind) {
+      const body = items.length
+        ? '<div class="space-y-3">' + items.map(it => auditItem(it, kind)).join('') + '</div>'
+        : '<p class="text-sm text-gray-400 italic">None.</p>';
+      return `
+        <div class="bg-white border border-gray-200 rounded-xl shadow-sm p-5">
+          <div class="mb-3">
+            <h3 class="text-sm font-semibold text-gray-900">${title} <span class="text-gray-400 font-normal">(${items.length})</span></h3>
+            <p class="text-xs text-gray-400">${escHtml(subtitle)}</p>
+          </div>
+          ${body}
+        </div>`;
+    }
+
+    function auditItem(it, kind) {
+      if (kind === 'plain') {
+        return `
+          <div class="text-sm border-l-2 border-gray-200 pl-3">
+            <p class="text-gray-700">${escHtml(it.citation)}</p>
+            ${it.reason ? `<p class="text-xs text-gray-400 mt-0.5">${escHtml(it.reason)}</p>` : ''}
+          </div>`;
+      }
+      const e = it.entry || {};
+      const author = e.author_display || 'Unknown Author';
+      const year = e.year || 'n.d.';
+      const title = e.title || 'Untitled';
+      const venue = e.journal || e.book_title || e.publisher || '';
+      const url = (e.url && /^https?:\/\//i.test(e.url)) ? e.url : null;
+      const conf = it.confidence
+        ? `<span class="text-[10px] uppercase tracking-wide px-1.5 py-0.5 rounded ${it.confidence === 'high' ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'}">${escHtml(it.confidence)}</span>`
+        : '';
+      return `
+        <div class="text-sm border-l-2 border-gray-200 pl-3">
+          <div class="flex items-start gap-2">
+            <p class="text-gray-800 font-medium leading-snug flex-1">${escHtml(title)}</p>
+            ${conf}
+          </div>
+          <p class="text-xs text-gray-500 mt-0.5">${escHtml(author)} · ${year}${venue ? ' · <em>' + escHtml(venue) + '</em>' : ''}</p>
+          ${it.reason ? `<p class="text-xs text-gray-400 mt-1">${escHtml(it.reason)}</p>` : ''}
+          ${url ? `<a href="${escAttr(url)}" target="_blank" rel="noopener noreferrer" class="text-brand hover:underline text-xs">View source ↗</a>` : ''}
+        </div>`;
+    }
+
+    function copyAuditApa(btn) {
+      if (!lastAuditApa.length) return;
+      const text = lastAuditApa.join('\n\n');
+      navigator.clipboard.writeText(text).then(() => {
+        const old = btn.textContent;
+        btn.textContent = 'Copied ✓';
+        setTimeout(() => { btn.textContent = old; }, 1800);
+      }).catch(() => { btn.textContent = 'Copy failed'; });
+    }
+
+    // Ctrl/Cmd + Enter runs the audit
+    document.getElementById('audit-input').addEventListener('keydown', e => {
+      if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
+        e.preventDefault();
+        runAudit();
       }
     });
 
