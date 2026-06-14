@@ -1,0 +1,456 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>HB Research Assistant — PRD</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = { darkMode: 'class' };
+  </script>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <script src="https://unpkg.com/lucide@latest"></script>
+  <style>
+    html { font-family: 'Inter', system-ui, -apple-system, sans-serif; }
+    body { font-feature-settings: "cv11", "ss01"; }
+    @media print {
+      html { background: white !important; color: black !important; color-scheme: light; }
+      html.dark { color-scheme: light; }
+      html.dark body, html.dark * { background: white !important; color: black !important; border-color: #d4d4d8 !important; }
+      .no-print { display: none !important; }
+      .print-card { break-inside: avoid; page-break-inside: avoid; }
+      header.sticky { position: static !important; backdrop-filter: none !important; }
+      main { padding-top: 0 !important; }
+      a { color: black !important; text-decoration: none !important; }
+    }
+  </style>
+</head>
+<body class="bg-zinc-50 dark:bg-zinc-950 text-zinc-900 dark:text-zinc-100 antialiased">
+  <header class="sticky top-0 z-10 backdrop-blur bg-zinc-50/80 dark:bg-zinc-950/80 border-b border-zinc-200 dark:border-zinc-800">
+    <div class="max-w-4xl mx-auto px-4 sm:px-6 py-3 flex items-center justify-between">
+      <span class="text-sm font-medium text-zinc-500 dark:text-zinc-400">PRD · HB Research Assistant</span>
+      <button id="theme-toggle" class="no-print inline-flex items-center justify-center w-9 h-9 rounded-md border border-zinc-200 dark:border-zinc-800 hover:bg-zinc-100 dark:hover:bg-zinc-900 transition" aria-label="Toggle theme">
+        <i data-lucide="sun" class="hidden dark:inline-block w-4 h-4"></i>
+        <i data-lucide="moon" class="inline-block dark:hidden w-4 h-4"></i>
+      </button>
+    </div>
+  </header>
+
+  <main class="max-w-4xl mx-auto px-4 sm:px-6 py-10 sm:py-14 space-y-14">
+
+    <!-- DISCLAIMER -->
+    <div class="rounded-lg border border-amber-200 dark:border-amber-900/60 bg-amber-50 dark:bg-amber-950/30 p-4 text-sm text-amber-900 dark:text-amber-200">
+      <p><strong class="font-semibold">About this file:</strong> Everything in <code class="font-mono text-xs">_build_plan/</code> (this PRD and the per-milestone folders) is a temporary documentation artifact for the initial build-out of this codebase. These files are not functional — no code, configuration, runtime logic, tests, or deployment process should import, read, reference, or depend on anything in <code class="font-mono text-xs">_build_plan/</code>. Once the initial milestones are built and shipped, the entire <code class="font-mono text-xs">_build_plan/</code> folder is expected to be deleted from the codebase.</p>
+    </div>
+
+    <!-- HERO -->
+    <section>
+      <h1 class="text-4xl sm:text-5xl font-bold tracking-tight">HB Research Assistant</h1>
+      <p class="mt-5 text-lg sm:text-xl text-zinc-600 dark:text-zinc-400 leading-relaxed">A focused web app that transforms the Humanistic Buddhism Research Bibliography — a curated corpus of 1,833 scholarly entries maintained by Nan Tien Institute — into a live AI research assistant. The first release delivers two capabilities no existing tool offers for this corpus: a multi-turn grounded Q&A interface where every AI response cites specific bibliography entries, and a reference audit tool where journal editors and researchers paste a bibliography and instantly see what key HB literature is missing. Built for HB scholars, journal editors, and PhD students attending the 12th HB Symposium and beyond.</p>
+      <div class="mt-6 flex flex-wrap gap-2">
+        <span class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 text-xs font-medium text-zinc-700 dark:text-zinc-300">Python</span>
+        <span class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 text-xs font-medium text-zinc-700 dark:text-zinc-300">FastAPI</span>
+        <span class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 text-xs font-medium text-zinc-700 dark:text-zinc-300">SQLite FTS5</span>
+        <span class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 text-xs font-medium text-zinc-700 dark:text-zinc-300">Gemini 3.1 Flash Lite</span>
+        <span class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 text-xs font-medium text-zinc-700 dark:text-zinc-300">Tailwind CSS</span>
+        <span class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 text-xs font-medium text-zinc-700 dark:text-zinc-300">Vanilla JS</span>
+        <span class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 text-xs font-medium text-zinc-700 dark:text-zinc-300">Railway</span>
+      </div>
+    </section>
+
+    <!-- WHAT THE APP DOES -->
+    <section>
+      <h2 class="text-xs font-semibold uppercase tracking-[0.18em] text-zinc-500 dark:text-zinc-400 flex items-center gap-2">
+        <i data-lucide="sparkles" class="w-3.5 h-3.5"></i>What the app does
+      </h2>
+      <ul class="mt-5 grid grid-cols-1 sm:grid-cols-2 gap-3 list-none p-0">
+        <li class="print-card rounded-lg border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 p-4">
+          <div class="flex items-start gap-3">
+            <div class="shrink-0 mt-0.5 w-8 h-8 rounded-md bg-zinc-100 dark:bg-zinc-800 flex items-center justify-center">
+              <i data-lucide="home" class="w-4 h-4 text-zinc-700 dark:text-zinc-300"></i>
+            </div>
+            <div>
+              <p class="font-medium text-zinc-900 dark:text-zinc-100">Landing page</p>
+              <p class="mt-1 text-sm text-zinc-600 dark:text-zinc-400 leading-relaxed">Introduces the tool to first-time visitors with corpus stats and three clear entry points into the app.</p>
+            </div>
+          </div>
+        </li>
+        <li class="print-card rounded-lg border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 p-4">
+          <div class="flex items-start gap-3">
+            <div class="shrink-0 mt-0.5 w-8 h-8 rounded-md bg-zinc-100 dark:bg-zinc-800 flex items-center justify-center">
+              <i data-lucide="search" class="w-4 h-4 text-zinc-700 dark:text-zinc-300"></i>
+            </div>
+            <div>
+              <p class="font-medium text-zinc-900 dark:text-zinc-100">Corpus search</p>
+              <p class="mt-1 text-sm text-zinc-600 dark:text-zinc-400 leading-relaxed">Keyword search over all 1,833 entries with filters for publication year range and type.</p>
+            </div>
+          </div>
+        </li>
+        <li class="print-card rounded-lg border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 p-4">
+          <div class="flex items-start gap-3">
+            <div class="shrink-0 mt-0.5 w-8 h-8 rounded-md bg-zinc-100 dark:bg-zinc-800 flex items-center justify-center">
+              <i data-lucide="bot" class="w-4 h-4 text-zinc-700 dark:text-zinc-300"></i>
+            </div>
+            <div>
+              <p class="font-medium text-zinc-900 dark:text-zinc-100">Grounded Q&amp;A with citations</p>
+              <p class="mt-1 text-sm text-zinc-600 dark:text-zinc-400 leading-relaxed">Multi-turn research conversations (up to 5 turns) where every AI claim links to a specific corpus entry.</p>
+            </div>
+          </div>
+        </li>
+        <li class="print-card rounded-lg border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 p-4">
+          <div class="flex items-start gap-3">
+            <div class="shrink-0 mt-0.5 w-8 h-8 rounded-md bg-zinc-100 dark:bg-zinc-800 flex items-center justify-center">
+              <i data-lucide="file-text" class="w-4 h-4 text-zinc-700 dark:text-zinc-300"></i>
+            </div>
+            <div>
+              <p class="font-medium text-zinc-900 dark:text-zinc-100">Reference audit</p>
+              <p class="mt-1 text-sm text-zinc-600 dark:text-zinc-400 leading-relaxed">Paste any bibliography and get back verified citations, missing HB literature, and ranked suggestions.</p>
+            </div>
+          </div>
+        </li>
+      </ul>
+    </section>
+
+    <!-- ALREADY PROVIDED -->
+    <section>
+      <h2 class="text-xs font-semibold uppercase tracking-[0.18em] text-zinc-500 dark:text-zinc-400 flex items-center gap-2">
+        <i data-lucide="package-check" class="w-3.5 h-3.5"></i>Already provided by the existing corpus CSV
+      </h2>
+      <ul class="mt-5 flex flex-wrap gap-2 list-none p-0">
+        <li class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 text-sm text-zinc-700 dark:text-zinc-300">
+          <i data-lucide="check" class="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400"></i>1,833 curated bibliography entries
+        </li>
+        <li class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 text-sm text-zinc-700 dark:text-zinc-300">
+          <i data-lucide="check" class="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400"></i>Abstracts for most entries
+        </li>
+        <li class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 text-sm text-zinc-700 dark:text-zinc-300">
+          <i data-lucide="check" class="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400"></i>Full author, editor, journal, publisher metadata
+        </li>
+        <li class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 text-sm text-zinc-700 dark:text-zinc-300">
+          <i data-lucide="check" class="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400"></i>Source URLs for most entries
+        </li>
+        <li class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 text-sm text-zinc-700 dark:text-zinc-300">
+          <i data-lucide="check" class="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400"></i>Publication year range 2000–2025
+        </li>
+      </ul>
+    </section>
+
+    <!-- OUT OF SCOPE -->
+    <section>
+      <h2 class="text-xs font-semibold uppercase tracking-[0.18em] text-zinc-500 dark:text-zinc-400 flex items-center gap-2">
+        <i data-lucide="minus-circle" class="w-3.5 h-3.5"></i>Out of scope (v1)
+      </h2>
+      <ul class="mt-5 space-y-2.5 list-none p-0">
+        <li class="flex items-start gap-3">
+          <i data-lucide="x" class="w-4 h-4 mt-1 shrink-0 text-zinc-400 dark:text-zinc-600"></i>
+          <span class="text-zinc-700 dark:text-zinc-300"><span class="font-medium">User accounts / login</span><span class="text-zinc-500 dark:text-zinc-400"> — no sign-in, no saved sessions, no personal history; the tool is open and stateless</span></span>
+        </li>
+        <li class="flex items-start gap-3">
+          <i data-lucide="x" class="w-4 h-4 mt-1 shrink-0 text-zinc-400 dark:text-zinc-600"></i>
+          <span class="text-zinc-700 dark:text-zinc-300"><span class="font-medium">Semantic / vector search</span><span class="text-zinc-500 dark:text-zinc-400"> — keyword + full-text search only; embeddings and vector database come in Phase 2</span></span>
+        </li>
+        <li class="flex items-start gap-3">
+          <i data-lucide="x" class="w-4 h-4 mt-1 shrink-0 text-zinc-400 dark:text-zinc-600"></i>
+          <span class="text-zinc-700 dark:text-zinc-300"><span class="font-medium">Gap mapping &amp; research question refinement</span><span class="text-zinc-500 dark:text-zinc-400"> — powerful but needs more AI scaffolding than this sprint allows</span></span>
+        </li>
+        <li class="flex items-start gap-3">
+          <i data-lucide="x" class="w-4 h-4 mt-1 shrink-0 text-zinc-400 dark:text-zinc-600"></i>
+          <span class="text-zinc-700 dark:text-zinc-300"><span class="font-medium">Literature review generator</span><span class="text-zinc-500 dark:text-zinc-400"> — Phase 2</span></span>
+        </li>
+        <li class="flex items-start gap-3">
+          <i data-lucide="x" class="w-4 h-4 mt-1 shrink-0 text-zinc-400 dark:text-zinc-600"></i>
+          <span class="text-zinc-700 dark:text-zinc-300"><span class="font-medium">Teaching / syllabus builder</span><span class="text-zinc-500 dark:text-zinc-400"> — Phase 2</span></span>
+        </li>
+        <li class="flex items-start gap-3">
+          <i data-lucide="x" class="w-4 h-4 mt-1 shrink-0 text-zinc-400 dark:text-zinc-600"></i>
+          <span class="text-zinc-700 dark:text-zinc-300"><span class="font-medium">Corpus contribution workflow</span><span class="text-zinc-500 dark:text-zinc-400"> — researchers cannot submit new entries yet; CSV is the source of truth</span></span>
+        </li>
+        <li class="flex items-start gap-3">
+          <i data-lucide="x" class="w-4 h-4 mt-1 shrink-0 text-zinc-400 dark:text-zinc-600"></i>
+          <span class="text-zinc-700 dark:text-zinc-300"><span class="font-medium">Citation export (BibTeX, Zotero, APA)</span><span class="text-zinc-500 dark:text-zinc-400"> — Phase 2</span></span>
+        </li>
+        <li class="flex items-start gap-3">
+          <i data-lucide="x" class="w-4 h-4 mt-1 shrink-0 text-zinc-400 dark:text-zinc-600"></i>
+          <span class="text-zinc-700 dark:text-zinc-300"><span class="font-medium">Saving conversations or audit results</span><span class="text-zinc-500 dark:text-zinc-400"> — sessions are browser-only and reset on close</span></span>
+        </li>
+        <li class="flex items-start gap-3">
+          <i data-lucide="x" class="w-4 h-4 mt-1 shrink-0 text-zinc-400 dark:text-zinc-600"></i>
+          <span class="text-zinc-700 dark:text-zinc-300"><span class="font-medium">Multiple AI models or user-supplied API keys</span><span class="text-zinc-500 dark:text-zinc-400"> — one model (Gemini 3.1 Flash Lite), one server-side key</span></span>
+        </li>
+        <li class="flex items-start gap-3">
+          <i data-lucide="x" class="w-4 h-4 mt-1 shrink-0 text-zinc-400 dark:text-zinc-600"></i>
+          <span class="text-zinc-700 dark:text-zinc-300"><span class="font-medium">Admin panel / in-app corpus editing</span><span class="text-zinc-500 dark:text-zinc-400"> — corpus is read-only; updated via CSV replacement</span></span>
+        </li>
+        <li class="flex items-start gap-3">
+          <i data-lucide="x" class="w-4 h-4 mt-1 shrink-0 text-zinc-400 dark:text-zinc-600"></i>
+          <span class="text-zinc-700 dark:text-zinc-300"><span class="font-medium">Multi-corpus / Direction B architecture</span><span class="text-zinc-500 dark:text-zinc-400"> — HB corpus only; open-source engine is a later phase</span></span>
+        </li>
+      </ul>
+    </section>
+
+    <!-- INTEGRATIONS -->
+    <section>
+      <h2 class="text-xs font-semibold uppercase tracking-[0.18em] text-zinc-500 dark:text-zinc-400 flex items-center gap-2">
+        <i data-lucide="plug" class="w-3.5 h-3.5"></i>External integrations
+      </h2>
+      <div class="mt-5 grid grid-cols-1 sm:grid-cols-2 gap-3">
+        <div class="print-card rounded-lg border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 p-5">
+          <div class="flex items-center gap-2">
+            <i data-lucide="plug" class="w-4 h-4 text-zinc-500 dark:text-zinc-400"></i>
+            <h3 class="font-semibold text-zinc-900 dark:text-zinc-100">Google Gemini API</h3>
+            <span class="ml-auto text-xs text-zinc-500 dark:text-zinc-400">AI reasoning</span>
+          </div>
+          <p class="mt-3 text-sm text-zinc-600 dark:text-zinc-400 leading-relaxed">Powers both the Q&amp;A and reference audit features. The app pre-filters corpus entries by keyword, then sends the relevant entries plus the user's question to Gemini 3.1 Flash Lite, which returns a grounded response. Free tier: 1,500 requests/day, 15 requests/minute — sufficient for a symposium demo.</p>
+          <p class="mt-4 text-[11px] font-semibold uppercase tracking-[0.16em] text-zinc-500 dark:text-zinc-400 flex items-center gap-1.5"><i data-lucide="key" class="w-3 h-3"></i>Credentials needed</p>
+          <ul class="mt-2 space-y-1.5 list-none p-0">
+            <li class="flex items-center gap-2 text-sm text-zinc-700 dark:text-zinc-300"><i data-lucide="key-round" class="w-3.5 h-3.5 text-zinc-400 dark:text-zinc-500"></i>GEMINI_API_KEY — from aistudio.google.com</li>
+          </ul>
+        </div>
+      </div>
+    </section>
+
+    <!-- DATA MODEL -->
+    <section>
+      <h2 class="text-xs font-semibold uppercase tracking-[0.18em] text-zinc-500 dark:text-zinc-400 flex items-center gap-2">
+        <i data-lucide="database" class="w-3.5 h-3.5"></i>Data model
+      </h2>
+      <p class="mt-3 text-sm text-zinc-500 dark:text-zinc-400">What the app needs to remember.</p>
+      <div class="mt-5 grid grid-cols-1 sm:grid-cols-2 gap-3">
+        <div class="print-card rounded-lg border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 p-5">
+          <div class="flex items-center gap-2">
+            <i data-lucide="box" class="w-4 h-4 text-zinc-500 dark:text-zinc-400"></i>
+            <h3 class="font-semibold text-zinc-900 dark:text-zinc-100">Bibliography Entry</h3>
+          </div>
+          <p class="mt-2 text-xs text-zinc-500 dark:text-zinc-400">Read-only. Loaded from CSV at startup. 1,833 records (December 2025 snapshot; updated corpus expected in a few days — count is read live from /api/stats).</p>
+          <table class="mt-4 w-full text-sm">
+            <tbody class="divide-y divide-zinc-100 dark:divide-zinc-800">
+              <tr><td class="py-2 pr-4 font-mono text-xs font-medium text-zinc-700 dark:text-zinc-300 align-top whitespace-nowrap">serial_no</td><td class="py-2 text-zinc-600 dark:text-zinc-400 leading-relaxed">Unique identifier from the original CSV</td></tr>
+              <tr><td class="py-2 pr-4 font-mono text-xs font-medium text-zinc-700 dark:text-zinc-300 align-top whitespace-nowrap">type</td><td class="py-2 text-zinc-600 dark:text-zinc-400 leading-relaxed">Publication type — journal article, book, conference paper, etc.</td></tr>
+              <tr><td class="py-2 pr-4 font-mono text-xs font-medium text-zinc-700 dark:text-zinc-300 align-top whitespace-nowrap">authors</td><td class="py-2 text-zinc-600 dark:text-zinc-400 leading-relaxed">Up to 4 authors (last name + first name each)</td></tr>
+              <tr><td class="py-2 pr-4 font-mono text-xs font-medium text-zinc-700 dark:text-zinc-300 align-top whitespace-nowrap">editors</td><td class="py-2 text-zinc-600 dark:text-zinc-400 leading-relaxed">Up to 3 editors (last name + first name each)</td></tr>
+              <tr><td class="py-2 pr-4 font-mono text-xs font-medium text-zinc-700 dark:text-zinc-300 align-top whitespace-nowrap">title</td><td class="py-2 text-zinc-600 dark:text-zinc-400 leading-relaxed">Title of the work</td></tr>
+              <tr><td class="py-2 pr-4 font-mono text-xs font-medium text-zinc-700 dark:text-zinc-300 align-top whitespace-nowrap">book_title</td><td class="py-2 text-zinc-600 dark:text-zinc-400 leading-relaxed">Title of the containing book (for book chapters)</td></tr>
+              <tr><td class="py-2 pr-4 font-mono text-xs font-medium text-zinc-700 dark:text-zinc-300 align-top whitespace-nowrap">journal</td><td class="py-2 text-zinc-600 dark:text-zinc-400 leading-relaxed">Journal name (for journal articles)</td></tr>
+              <tr><td class="py-2 pr-4 font-mono text-xs font-medium text-zinc-700 dark:text-zinc-300 align-top whitespace-nowrap">volume / issue</td><td class="py-2 text-zinc-600 dark:text-zinc-400 leading-relaxed">Journal volume and issue number</td></tr>
+              <tr><td class="py-2 pr-4 font-mono text-xs font-medium text-zinc-700 dark:text-zinc-300 align-top whitespace-nowrap">pages</td><td class="py-2 text-zinc-600 dark:text-zinc-400 leading-relaxed">Page start and end of the work</td></tr>
+              <tr><td class="py-2 pr-4 font-mono text-xs font-medium text-zinc-700 dark:text-zinc-300 align-top whitespace-nowrap">city / publisher</td><td class="py-2 text-zinc-600 dark:text-zinc-400 leading-relaxed">Publication city and publisher name</td></tr>
+              <tr><td class="py-2 pr-4 font-mono text-xs font-medium text-zinc-700 dark:text-zinc-300 align-top whitespace-nowrap">year</td><td class="py-2 text-zinc-600 dark:text-zinc-400 leading-relaxed">Publication year</td></tr>
+              <tr><td class="py-2 pr-4 font-mono text-xs font-medium text-zinc-700 dark:text-zinc-300 align-top whitespace-nowrap">abstract</td><td class="py-2 text-zinc-600 dark:text-zinc-400 leading-relaxed">Full abstract text — the primary source for AI retrieval</td></tr>
+              <tr><td class="py-2 pr-4 font-mono text-xs font-medium text-zinc-700 dark:text-zinc-300 align-top whitespace-nowrap">url</td><td class="py-2 text-zinc-600 dark:text-zinc-400 leading-relaxed">Link to the online source</td></tr>
+            </tbody>
+          </table>
+          <p class="mt-4 text-xs text-zinc-500 dark:text-zinc-400"><span class="font-semibold uppercase tracking-[0.14em] text-[11px]">Related to</span> · Referenced by Audit Session results</p>
+        </div>
+        <div class="print-card rounded-lg border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 p-5">
+          <div class="flex items-center gap-2">
+            <i data-lucide="box" class="w-4 h-4 text-zinc-500 dark:text-zinc-400"></i>
+            <h3 class="font-semibold text-zinc-900 dark:text-zinc-100">Audit Session</h3>
+          </div>
+          <p class="mt-2 text-xs text-zinc-500 dark:text-zinc-400">Browser-only. Not stored on the server. Resets when the tab closes.</p>
+          <table class="mt-4 w-full text-sm">
+            <tbody class="divide-y divide-zinc-100 dark:divide-zinc-800">
+              <tr><td class="py-2 pr-4 font-mono text-xs font-medium text-zinc-700 dark:text-zinc-300 align-top whitespace-nowrap">raw_text</td><td class="py-2 text-zinc-600 dark:text-zinc-400 leading-relaxed">The bibliography text the user pasted in</td></tr>
+              <tr><td class="py-2 pr-4 font-mono text-xs font-medium text-zinc-700 dark:text-zinc-300 align-top whitespace-nowrap">verified</td><td class="py-2 text-zinc-600 dark:text-zinc-400 leading-relaxed">Pasted citations matched to corpus entries</td></tr>
+              <tr><td class="py-2 pr-4 font-mono text-xs font-medium text-zinc-700 dark:text-zinc-300 align-top whitespace-nowrap">missing</td><td class="py-2 text-zinc-600 dark:text-zinc-400 leading-relaxed">Key HB papers absent from the pasted list, with relevance reasons</td></tr>
+              <tr><td class="py-2 pr-4 font-mono text-xs font-medium text-zinc-700 dark:text-zinc-300 align-top whitespace-nowrap">suggested</td><td class="py-2 text-zinc-600 dark:text-zinc-400 leading-relaxed">Other relevant corpus entries not in the pasted list, ranked</td></tr>
+            </tbody>
+          </table>
+          <p class="mt-4 text-xs text-zinc-500 dark:text-zinc-400"><span class="font-semibold uppercase tracking-[0.14em] text-[11px]">Related to</span> · References Bibliography Entries</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- MILESTONES -->
+    <section>
+      <h2 class="text-xs font-semibold uppercase tracking-[0.18em] text-zinc-500 dark:text-zinc-400 flex items-center gap-2">
+        <i data-lucide="route" class="w-3.5 h-3.5"></i>Milestones
+      </h2>
+      <div class="mt-5 space-y-5">
+
+        <!-- Milestone 1 -->
+        <article class="print-card rounded-lg border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 overflow-hidden">
+          <header class="flex items-center gap-3 p-5 border-b border-zinc-100 dark:border-zinc-800">
+            <span class="shrink-0 w-8 h-8 rounded-full bg-zinc-900 dark:bg-zinc-100 text-zinc-50 dark:text-zinc-900 flex items-center justify-center text-sm font-semibold">1</span>
+            <h3 class="font-semibold text-lg text-zinc-900 dark:text-zinc-100">Foundation</h3>
+          </header>
+          <div class="p-5">
+            <p class="text-zinc-600 dark:text-zinc-400 leading-relaxed">Sets up the entire project skeleton, loads the CSV corpus into a searchable database, and gets the app live on a public URL. Everything later builds on this.</p>
+            <div class="mt-5 grid grid-cols-1 md:grid-cols-2 gap-5">
+              <div>
+                <h4 class="text-[11px] font-semibold uppercase tracking-[0.16em] text-zinc-500 dark:text-zinc-400 flex items-center gap-1.5">
+                  <i data-lucide="check-circle-2" class="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400"></i>What gets built
+                </h4>
+                <ul class="mt-3 space-y-2 text-sm text-zinc-700 dark:text-zinc-300 list-none p-0">
+                  <li class="flex items-start gap-2"><i data-lucide="check" class="w-3.5 h-3.5 mt-0.5 shrink-0 text-emerald-600 dark:text-emerald-400"></i><span>FastAPI project structure with CSV → SQLite FTS5 ingestion on startup</span></li>
+                  <li class="flex items-start gap-2"><i data-lucide="check" class="w-3.5 h-3.5 mt-0.5 shrink-0 text-emerald-600 dark:text-emerald-400"></i><span>Keyword search endpoint returning ranked results</span></li>
+                  <li class="flex items-start gap-2"><i data-lucide="check" class="w-3.5 h-3.5 mt-0.5 shrink-0 text-emerald-600 dark:text-emerald-400"></i><span>Result cards showing title, first author, year, type, and abstract excerpt</span></li>
+                  <li class="flex items-start gap-2"><i data-lucide="check" class="w-3.5 h-3.5 mt-0.5 shrink-0 text-emerald-600 dark:text-emerald-400"></i><span>Year range and publication type filters</span></li>
+                  <li class="flex items-start gap-2"><i data-lucide="check" class="w-3.5 h-3.5 mt-0.5 shrink-0 text-emerald-600 dark:text-emerald-400"></i><span>Expandable entry detail (full abstract + URL opens in new tab)</span></li>
+                  <li class="flex items-start gap-2"><i data-lucide="check" class="w-3.5 h-3.5 mt-0.5 shrink-0 text-emerald-600 dark:text-emerald-400"></i><span>Result count display ("Showing X of N entries", N = live count from /api/stats, currently 1,833)</span></li>
+                  <li class="flex items-start gap-2"><i data-lucide="check" class="w-3.5 h-3.5 mt-0.5 shrink-0 text-emerald-600 dark:text-emerald-400"></i><span>Deployed live to Railway with a working public URL</span></li>
+                </ul>
+              </div>
+              <div>
+                <h4 class="text-[11px] font-semibold uppercase tracking-[0.16em] text-zinc-500 dark:text-zinc-400 flex items-center gap-1.5">
+                  <i data-lucide="x-circle" class="w-3.5 h-3.5 text-zinc-400 dark:text-zinc-500"></i>Not in this milestone
+                </h4>
+                <ul class="mt-3 space-y-2 text-sm text-zinc-500 dark:text-zinc-400 list-none p-0">
+                  <li class="flex items-start gap-2"><i data-lucide="minus" class="w-3.5 h-3.5 mt-0.5 shrink-0"></i><span>Gemini API or any AI features</span></li>
+                  <li class="flex items-start gap-2"><i data-lucide="minus" class="w-3.5 h-3.5 mt-0.5 shrink-0"></i><span>Landing page (comes in Milestone 4)</span></li>
+                  <li class="flex items-start gap-2"><i data-lucide="minus" class="w-3.5 h-3.5 mt-0.5 shrink-0"></i><span>Final visual polish</span></li>
+                </ul>
+              </div>
+            </div>
+            <div class="mt-5 rounded-md border-l-4 border-emerald-500 bg-emerald-50 dark:bg-emerald-950/30 p-4 text-sm text-emerald-900 dark:text-emerald-200">
+              <p class="flex items-start gap-2"><i data-lucide="flag" class="w-4 h-4 mt-0.5 shrink-0"></i><span><span class="font-semibold">Done when:</span> A researcher can visit the live Railway URL, type "compassion" in the search bar, and see a filtered list of relevant corpus entries with abstracts, all within 1 second.</span></p>
+            </div>
+          </div>
+        </article>
+
+        <!-- Milestone 2 -->
+        <article class="print-card rounded-lg border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 overflow-hidden">
+          <header class="flex items-center gap-3 p-5 border-b border-zinc-100 dark:border-zinc-800">
+            <span class="shrink-0 w-8 h-8 rounded-full bg-zinc-900 dark:bg-zinc-100 text-zinc-50 dark:text-zinc-900 flex items-center justify-center text-sm font-semibold">2</span>
+            <h3 class="font-semibold text-lg text-zinc-900 dark:text-zinc-100">Grounded Q&amp;A</h3>
+          </header>
+          <div class="p-5">
+            <p class="text-zinc-600 dark:text-zinc-400 leading-relaxed">Adds the AI research conversation layer. Researchers ask questions in natural language and receive grounded, cited answers drawn from the HB corpus — not from the open internet.</p>
+            <div class="mt-5 grid grid-cols-1 md:grid-cols-2 gap-5">
+              <div>
+                <h4 class="text-[11px] font-semibold uppercase tracking-[0.16em] text-zinc-500 dark:text-zinc-400 flex items-center gap-1.5">
+                  <i data-lucide="check-circle-2" class="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400"></i>What gets built
+                </h4>
+                <ul class="mt-3 space-y-2 text-sm text-zinc-700 dark:text-zinc-300 list-none p-0">
+                  <li class="flex items-start gap-2"><i data-lucide="check" class="w-3.5 h-3.5 mt-0.5 shrink-0 text-emerald-600 dark:text-emerald-400"></i><span>Gemini API integration using GEMINI_API_KEY from environment</span></li>
+                  <li class="flex items-start gap-2"><i data-lucide="check" class="w-3.5 h-3.5 mt-0.5 shrink-0 text-emerald-600 dark:text-emerald-400"></i><span>Chat-style interface with text input and conversation thread</span></li>
+                  <li class="flex items-start gap-2"><i data-lucide="check" class="w-3.5 h-3.5 mt-0.5 shrink-0 text-emerald-600 dark:text-emerald-400"></i><span>Multi-turn conversations up to 5 turns, history visible throughout</span></li>
+                  <li class="flex items-start gap-2"><i data-lucide="check" class="w-3.5 h-3.5 mt-0.5 shrink-0 text-emerald-600 dark:text-emerald-400"></i><span>Thinking / loading indicator while response generates</span></li>
+                  <li class="flex items-start gap-2"><i data-lucide="check" class="w-3.5 h-3.5 mt-0.5 shrink-0 text-emerald-600 dark:text-emerald-400"></i><span>AI response in flowing prose with inline superscript citation numbers</span></li>
+                  <li class="flex items-start gap-2"><i data-lucide="check" class="w-3.5 h-3.5 mt-0.5 shrink-0 text-emerald-600 dark:text-emerald-400"></i><span>Numbered reference list below each response, each entry expandable</span></li>
+                  <li class="flex items-start gap-2"><i data-lucide="check" class="w-3.5 h-3.5 mt-0.5 shrink-0 text-emerald-600 dark:text-emerald-400"></i><span>"Based on X entries from the HB corpus" label on each response</span></li>
+                  <li class="flex items-start gap-2"><i data-lucide="check" class="w-3.5 h-3.5 mt-0.5 shrink-0 text-emerald-600 dark:text-emerald-400"></i><span>"Start new conversation" button available at any time; auto-prompted at 5 turns</span></li>
+                  <li class="flex items-start gap-2"><i data-lucide="check" class="w-3.5 h-3.5 mt-0.5 shrink-0 text-emerald-600 dark:text-emerald-400"></i><span>Honest "outside corpus" response when the question can't be grounded</span></li>
+                </ul>
+              </div>
+              <div>
+                <h4 class="text-[11px] font-semibold uppercase tracking-[0.16em] text-zinc-500 dark:text-zinc-400 flex items-center gap-1.5">
+                  <i data-lucide="x-circle" class="w-3.5 h-3.5 text-zinc-400 dark:text-zinc-500"></i>Not in this milestone
+                </h4>
+                <ul class="mt-3 space-y-2 text-sm text-zinc-500 dark:text-zinc-400 list-none p-0">
+                  <li class="flex items-start gap-2"><i data-lucide="minus" class="w-3.5 h-3.5 mt-0.5 shrink-0"></i><span>Reference audit (Milestone 3)</span></li>
+                  <li class="flex items-start gap-2"><i data-lucide="minus" class="w-3.5 h-3.5 mt-0.5 shrink-0"></i><span>Saving or exporting conversations</span></li>
+                  <li class="flex items-start gap-2"><i data-lucide="minus" class="w-3.5 h-3.5 mt-0.5 shrink-0"></i><span>Sources outside the HB corpus</span></li>
+                </ul>
+              </div>
+            </div>
+            <div class="mt-5 rounded-md border-l-4 border-emerald-500 bg-emerald-50 dark:bg-emerald-950/30 p-4 text-sm text-emerald-900 dark:text-emerald-200">
+              <p class="flex items-start gap-2"><i data-lucide="flag" class="w-4 h-4 mt-0.5 shrink-0"></i><span><span class="font-semibold">Done when:</span> A researcher can ask "What does HB scholarship say about compassion and social action?" and receive a multi-paragraph prose response with numbered superscript citations, each linking to a verifiable corpus entry.</span></p>
+            </div>
+          </div>
+        </article>
+
+        <!-- Milestone 3 -->
+        <article class="print-card rounded-lg border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 overflow-hidden">
+          <header class="flex items-center gap-3 p-5 border-b border-zinc-100 dark:border-zinc-800">
+            <span class="shrink-0 w-8 h-8 rounded-full bg-zinc-900 dark:bg-zinc-100 text-zinc-50 dark:text-zinc-900 flex items-center justify-center text-sm font-semibold">3</span>
+            <h3 class="font-semibold text-lg text-zinc-900 dark:text-zinc-100">Reference Audit</h3>
+          </header>
+          <div class="p-5">
+            <p class="text-zinc-600 dark:text-zinc-400 leading-relaxed">Adds the journal editor tool. A researcher or editor pastes any bibliography and instantly learns what's verified in the HB corpus, what's missing, and what else is relevant.</p>
+            <div class="mt-5 grid grid-cols-1 md:grid-cols-2 gap-5">
+              <div>
+                <h4 class="text-[11px] font-semibold uppercase tracking-[0.16em] text-zinc-500 dark:text-zinc-400 flex items-center gap-1.5">
+                  <i data-lucide="check-circle-2" class="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400"></i>What gets built
+                </h4>
+                <ul class="mt-3 space-y-2 text-sm text-zinc-700 dark:text-zinc-300 list-none p-0">
+                  <li class="flex items-start gap-2"><i data-lucide="check" class="w-3.5 h-3.5 mt-0.5 shrink-0 text-emerald-600 dark:text-emerald-400"></i><span>Text area for pasting a bibliography in any citation format</span></li>
+                  <li class="flex items-start gap-2"><i data-lucide="check" class="w-3.5 h-3.5 mt-0.5 shrink-0 text-emerald-600 dark:text-emerald-400"></i><span>"Audit" button that triggers the analysis</span></li>
+                  <li class="flex items-start gap-2"><i data-lucide="check" class="w-3.5 h-3.5 mt-0.5 shrink-0 text-emerald-600 dark:text-emerald-400"></i><span>Three-section results: ✅ Verified / ⚠️ Missing / 💡 Suggested</span></li>
+                  <li class="flex items-start gap-2"><i data-lucide="check" class="w-3.5 h-3.5 mt-0.5 shrink-0 text-emerald-600 dark:text-emerald-400"></i><span>Each result shows title, author, year, and a one-line relevance reason</span></li>
+                  <li class="flex items-start gap-2"><i data-lucide="check" class="w-3.5 h-3.5 mt-0.5 shrink-0 text-emerald-600 dark:text-emerald-400"></i><span>"Copy suggestions as APA" button for the Missing and Suggested sections</span></li>
+                </ul>
+              </div>
+              <div>
+                <h4 class="text-[11px] font-semibold uppercase tracking-[0.16em] text-zinc-500 dark:text-zinc-400 flex items-center gap-1.5">
+                  <i data-lucide="x-circle" class="w-3.5 h-3.5 text-zinc-400 dark:text-zinc-500"></i>Not in this milestone
+                </h4>
+                <ul class="mt-3 space-y-2 text-sm text-zinc-500 dark:text-zinc-400 list-none p-0">
+                  <li class="flex items-start gap-2"><i data-lucide="minus" class="w-3.5 h-3.5 mt-0.5 shrink-0"></i><span>Saving audit results</span></li>
+                  <li class="flex items-start gap-2"><i data-lucide="minus" class="w-3.5 h-3.5 mt-0.5 shrink-0"></i><span>Batch auditing multiple papers</span></li>
+                  <li class="flex items-start gap-2"><i data-lucide="minus" class="w-3.5 h-3.5 mt-0.5 shrink-0"></i><span>Detecting citation formatting errors</span></li>
+                  <li class="flex items-start gap-2"><i data-lucide="minus" class="w-3.5 h-3.5 mt-0.5 shrink-0"></i><span>Sources outside the HB corpus</span></li>
+                </ul>
+              </div>
+            </div>
+            <div class="mt-5 rounded-md border-l-4 border-emerald-500 bg-emerald-50 dark:bg-emerald-950/30 p-4 text-sm text-emerald-900 dark:text-emerald-200">
+              <p class="flex items-start gap-2"><i data-lucide="flag" class="w-4 h-4 mt-0.5 shrink-0"></i><span><span class="font-semibold">Done when:</span> A journal editor can paste a paper's bibliography, click Audit, and within 30 seconds see a three-section report identifying which citations are in the HB corpus and which key HB papers are missing.</span></p>
+            </div>
+          </div>
+        </article>
+
+        <!-- Milestone 4 -->
+        <article class="print-card rounded-lg border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 overflow-hidden">
+          <header class="flex items-center gap-3 p-5 border-b border-zinc-100 dark:border-zinc-800">
+            <span class="shrink-0 w-8 h-8 rounded-full bg-zinc-900 dark:bg-zinc-100 text-zinc-50 dark:text-zinc-900 flex items-center justify-center text-sm font-semibold">4</span>
+            <h3 class="font-semibold text-lg text-zinc-900 dark:text-zinc-100">Polish &amp; Launch</h3>
+          </header>
+          <div class="p-5">
+            <p class="text-zinc-600 dark:text-zinc-400 leading-relaxed">Adds the landing page, unifies the visual design across all views, and prepares the app for its debut at the 12th HB Symposium on 20–21 June 2026.</p>
+            <div class="mt-5 grid grid-cols-1 md:grid-cols-2 gap-5">
+              <div>
+                <h4 class="text-[11px] font-semibold uppercase tracking-[0.16em] text-zinc-500 dark:text-zinc-400 flex items-center gap-1.5">
+                  <i data-lucide="check-circle-2" class="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400"></i>What gets built
+                </h4>
+                <ul class="mt-3 space-y-2 text-sm text-zinc-700 dark:text-zinc-300 list-none p-0">
+                  <li class="flex items-start gap-2"><i data-lucide="check" class="w-3.5 h-3.5 mt-0.5 shrink-0 text-emerald-600 dark:text-emerald-400"></i><span>Landing page: NTI logo, 2–3 sentence description, three entry points, corpus stats, citation request, link to existing visualiser</span></li>
+                  <li class="flex items-start gap-2"><i data-lucide="check" class="w-3.5 h-3.5 mt-0.5 shrink-0 text-emerald-600 dark:text-emerald-400"></i><span>Unified visual design across all pages — clean, professional, academic tone</span></li>
+                  <li class="flex items-start gap-2"><i data-lucide="check" class="w-3.5 h-3.5 mt-0.5 shrink-0 text-emerald-600 dark:text-emerald-400"></i><span>End-to-end testing with 20+ real research queries across all three features</span></li>
+                  <li class="flex items-start gap-2"><i data-lucide="check" class="w-3.5 h-3.5 mt-0.5 shrink-0 text-emerald-600 dark:text-emerald-400"></i><span>Final Railway deploy with stable public URL ready to demo</span></li>
+                </ul>
+              </div>
+              <div>
+                <h4 class="text-[11px] font-semibold uppercase tracking-[0.16em] text-zinc-500 dark:text-zinc-400 flex items-center gap-1.5">
+                  <i data-lucide="x-circle" class="w-3.5 h-3.5 text-zinc-400 dark:text-zinc-500"></i>Not in this milestone
+                </h4>
+                <ul class="mt-3 space-y-2 text-sm text-zinc-500 dark:text-zinc-400 list-none p-0">
+                  <li class="flex items-start gap-2"><i data-lucide="minus" class="w-3.5 h-3.5 mt-0.5 shrink-0"></i><span>New features — scope is frozen for the symposium</span></li>
+                  <li class="flex items-start gap-2"><i data-lucide="minus" class="w-3.5 h-3.5 mt-0.5 shrink-0"></i><span>Mobile app or browser extension</span></li>
+                  <li class="flex items-start gap-2"><i data-lucide="minus" class="w-3.5 h-3.5 mt-0.5 shrink-0"></i><span>Phase 2 features (vector search, gap mapping, etc.)</span></li>
+                </ul>
+              </div>
+            </div>
+            <div class="mt-5 rounded-md border-l-4 border-emerald-500 bg-emerald-50 dark:bg-emerald-950/30 p-4 text-sm text-emerald-900 dark:text-emerald-200">
+              <p class="flex items-start gap-2"><i data-lucide="flag" class="w-4 h-4 mt-0.5 shrink-0"></i><span><span class="font-semibold">Done when:</span> A first-time visitor lands on the page, understands what the tool does within 10 seconds, navigates to Q&amp;A, asks a real research question, and gets a grounded cited response — all without instruction.</span></p>
+            </div>
+          </div>
+        </article>
+
+      </div>
+    </section>
+
+    <footer class="pt-8 border-t border-zinc-200 dark:border-zinc-800 text-xs text-zinc-500 dark:text-zinc-400">
+      Generated by <span class="font-medium">bm-prd-creator</span>. Open <code class="font-mono">_build_plan/milestones/1-foundation/prompt.md</code> and ask the agent to start there.
+    </footer>
+  </main>
+
+  <script>
+    (function () {
+      var html = document.documentElement;
+      var stored = localStorage.getItem('prd-theme');
+      var prefersDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+      var initial = stored ? stored : (prefersDark ? 'dark' : 'light');
+      if (initial === 'dark') html.classList.add('dark');
+      var btn = document.getElementById('theme-toggle');
+      if (btn) {
+        btn.addEventListener('click', function () {
+          var isDark = html.classList.toggle('dark');
+          localStorage.setItem('prd-theme', isDark ? 'dark' : 'light');
+        });
+      }
+      if (window.lucide) window.lucide.createIcons();
+    })();
+  </script>
+</body>
+</html>
