@@ -12,7 +12,8 @@ from google import genai
 from google.genai import types as genai_types
 from dotenv import load_dotenv
 from fastapi import FastAPI, Query
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 load_dotenv()
@@ -20,7 +21,12 @@ load_dotenv()
 logger = logging.getLogger("hb_research_assistant")
 
 CSV_PATH = Path(__file__).parent / "data" / "HBBiblio_Dec2025_Complete.csv"
+STATIC_DIR = Path(__file__).parent / "static"
 ABSTRACT_EXCERPT_LEN = 250
+# Human-readable snapshot date for the current corpus. Surfaced via /api/stats
+# so the landing page reads it live — editable in one place when the corpus is
+# swapped (no template change needed).
+CORPUS_LAST_UPDATED = "December 2025"
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
 GEMINI_MODEL = "gemini-3.1-flash-lite"
 
@@ -209,6 +215,17 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(lifespan=lifespan)
 
+if STATIC_DIR.is_dir():
+    app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
+
+
+@app.get("/favicon.ico")
+def favicon():
+    logo = STATIC_DIR / "nti_logo.png"
+    if logo.is_file():
+        return FileResponse(logo)
+    return JSONResponse(status_code=404, content={"error": "not found"})
+
 
 @app.get("/api/stats")
 def stats():
@@ -216,7 +233,12 @@ def stats():
         "SELECT COUNT(*) as total, MIN(year) as year_min, MAX(year) as year_max FROM entries WHERE year IS NOT NULL"
     ).fetchone()
     total_all = _db.execute("SELECT COUNT(*) as cnt FROM entries").fetchone()["cnt"]
-    return {"total": total_all, "year_min": row["year_min"], "year_max": row["year_max"]}
+    return {
+        "total": total_all,
+        "year_min": row["year_min"],
+        "year_max": row["year_max"],
+        "last_updated": CORPUS_LAST_UPDATED,
+    }
 
 
 @app.get("/api/types")
@@ -252,8 +274,14 @@ def search(
     where_clause = ("AND " + " AND ".join(conditions)) if conditions else ""
 
     if q.strip():
-        # Escape FTS5 special characters to avoid query syntax errors
-        safe_q = q.replace('"', '""')
+        # Tokenise on whitespace and AND the terms together (each term quoted so
+        # FTS5 special characters can't break the query). This matches entries
+        # that contain ALL terms anywhere, rather than only the exact adjacent
+        # phrase — so "environment ecology" or "gender women" return results
+        # instead of zero. A single whitespace-free token (incl. a CJK string)
+        # collapses to one quoted term, preserving prior behaviour.
+        terms = [t.replace('"', '""') for t in q.split() if t.strip()]
+        fts_match = " ".join(f'"{t}"' for t in terms) if terms else f'"{q.strip()}"'
         count_sql = f"""
             SELECT COUNT(*) as cnt
             FROM entries_fts f
@@ -270,7 +298,7 @@ def search(
             ORDER BY rank
             LIMIT ? OFFSET ?
         """
-        match_params = [f'"{safe_q}"'] + params
+        match_params = [fts_match] + params
     else:
         count_sql = f"""
             SELECT COUNT(*) as cnt

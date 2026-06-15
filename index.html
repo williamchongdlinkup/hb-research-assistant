@@ -5,47 +5,48 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>HB Research Assistant</title>
   <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="icon" href="/static/nti_logo.png" />
   <style>
     .abstract-excerpt { display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
     .card-expanded .abstract-excerpt { display: block; -webkit-line-clamp: unset; }
     .fade-in { animation: fadeIn 0.15s ease-in; }
     @keyframes fadeIn { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }
-    .spinner { border: 2px solid #e5e7eb; border-top-color: #6366f1; border-radius: 50%; width: 18px; height: 18px; animation: spin 0.7s linear infinite; display: inline-block; flex-shrink: 0; }
+    .spinner { border: 2px solid #e5e7eb; border-top-color: #b01116; border-radius: 50%; width: 18px; height: 18px; animation: spin 0.7s linear infinite; display: inline-block; flex-shrink: 0; }
     @keyframes spin { to { transform: rotate(360deg); } }
     sup a { font-size: 0.65em; vertical-align: super; text-decoration: none; }
     sup a:hover { text-decoration: underline; }
     .prose-answer p { margin-bottom: 0.75em; }
     .prose-answer p:last-child { margin-bottom: 0; }
     .scroll-mt-ref { scroll-margin-top: 8px; }
+    /* Warm paper background for an academic, print-like feel */
+    body { background-color: #faf8f5; }
   </style>
   <script>
     tailwind.config = {
       theme: {
         extend: {
           colors: {
-            brand: { DEFAULT: '#4f46e5', light: '#818cf8', dark: '#3730a3' }
+            // Nan Tien Institute brand crimson (from nantien.edu.au)
+            brand: { DEFAULT: '#b01116', light: '#d14a4f', dark: '#8a0d11' },
+            paper: '#faf8f5'
           }
         }
       }
     }
   </script>
 </head>
-<body class="bg-gray-50 text-gray-900 min-h-screen font-sans">
+<body class="text-gray-900 min-h-screen font-sans flex flex-col">
 
   <!-- Header -->
   <header class="bg-white border-b border-gray-200 shadow-sm sticky top-0 z-10">
-    <div class="max-w-5xl mx-auto px-4 py-4 flex items-center gap-3">
-      <div class="flex-shrink-0">
-        <div class="w-8 h-8 rounded-lg bg-brand flex items-center justify-center">
-          <svg class="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.746 0 3.332.477 4.5 1.253v13C19.832 18.477 18.246 18 16.5 18c-1.746 0-3.332.477-4.5 1.253" />
-          </svg>
-        </div>
-      </div>
-      <div>
-        <h1 class="text-lg font-semibold leading-tight text-gray-900">HB Research Assistant</h1>
-        <p class="text-xs text-gray-500">Humanistic Buddhism Research Bibliography · Nan Tien Institute</p>
-      </div>
+    <div class="max-w-5xl mx-auto px-4 py-3 flex items-center gap-3">
+      <button onclick="switchTab('home')" class="flex items-center gap-3 text-left group" aria-label="Go to home">
+        <img src="/static/nti_logo.png" alt="Nan Tien Institute" class="h-9 w-auto flex-shrink-0" />
+        <span class="hidden sm:block border-l border-gray-200 pl-3">
+          <span class="block text-base font-semibold leading-tight text-gray-900 group-hover:text-brand transition-colors">HB Research Assistant</span>
+          <span class="block text-xs text-gray-500">Humanistic Buddhism Research Bibliography</span>
+        </span>
+      </button>
       <div class="ml-auto text-right">
         <p id="corpus-count" class="text-xs text-gray-400">Loading corpus…</p>
       </div>
@@ -56,7 +57,7 @@
   <div class="bg-white border-b border-gray-200">
     <div class="max-w-5xl mx-auto px-4 flex gap-0">
       <button id="tab-btn-search" onclick="switchTab('search')"
-        class="px-5 py-3 text-sm font-medium border-b-2 border-brand text-brand -mb-px transition-colors">
+        class="px-5 py-3 text-sm font-medium border-b-2 border-transparent text-gray-500 hover:text-gray-700 -mb-px transition-colors">
         Search
       </button>
       <button id="tab-btn-qa" onclick="switchTab('qa')"
@@ -71,9 +72,100 @@
   </div>
 
   <!-- ═══════════════════════════════════════════════════════════════════════ -->
+  <!-- Home / landing                                                          -->
+  <!-- ═══════════════════════════════════════════════════════════════════════ -->
+  <div id="tab-home">
+    <div class="max-w-5xl mx-auto px-4 py-12 sm:py-16">
+
+      <!-- Hero -->
+      <div class="text-center max-w-2xl mx-auto">
+        <img src="/static/nti_logo.png" alt="Nan Tien Institute" class="h-14 w-auto mx-auto mb-7" />
+        <h2 class="text-3xl sm:text-4xl font-bold tracking-tight text-gray-900">HB Research Assistant</h2>
+        <p class="mt-4 text-base sm:text-lg text-gray-600 leading-relaxed">
+          A research tool for the study of Humanistic Buddhism. Search six years of curated
+          scholarship, ask grounded questions answered only from the corpus with verifiable
+          citations, and audit any bibliography against the collection — all from one place.
+        </p>
+        <p id="home-stats" class="mt-5 text-sm text-gray-400">Loading corpus…</p>
+      </div>
+
+      <!-- Three entry points -->
+      <div class="mt-12 grid gap-4 sm:grid-cols-3">
+        <button onclick="switchTab('search')"
+          class="group text-left bg-white border border-gray-200 rounded-2xl p-6 shadow-sm hover:shadow-md hover:border-brand/40 transition-all">
+          <div class="w-11 h-11 rounded-xl bg-brand/10 text-brand flex items-center justify-center mb-4">
+            <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+            </svg>
+          </div>
+          <h3 class="text-base font-semibold text-gray-900 group-hover:text-brand transition-colors">Search</h3>
+          <p class="mt-1.5 text-sm text-gray-500 leading-relaxed">Browse and filter the full bibliography by keyword, author, year, and publication type.</p>
+          <span class="inline-flex items-center gap-1 mt-3 text-sm font-medium text-brand">Open search
+            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
+          </span>
+        </button>
+
+        <button onclick="switchTab('qa')"
+          class="group text-left bg-white border border-gray-200 rounded-2xl p-6 shadow-sm hover:shadow-md hover:border-brand/40 transition-all">
+          <div class="w-11 h-11 rounded-xl bg-brand/10 text-brand flex items-center justify-center mb-4">
+            <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.86 9.86 0 01-4-.8L3 20l1.3-3.9A7.96 7.96 0 013 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
+            </svg>
+          </div>
+          <h3 class="text-base font-semibold text-gray-900 group-hover:text-brand transition-colors">Q&amp;A Chat</h3>
+          <p class="mt-1.5 text-sm text-gray-500 leading-relaxed">Ask research questions and get prose answers grounded in the corpus, with inline citations.</p>
+          <span class="inline-flex items-center gap-1 mt-3 text-sm font-medium text-brand">Start asking
+            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
+          </span>
+        </button>
+
+        <button onclick="switchTab('audit')"
+          class="group text-left bg-white border border-gray-200 rounded-2xl p-6 shadow-sm hover:shadow-md hover:border-brand/40 transition-all">
+          <div class="w-11 h-11 rounded-xl bg-brand/10 text-brand flex items-center justify-center mb-4">
+            <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+            </svg>
+          </div>
+          <h3 class="text-base font-semibold text-gray-900 group-hover:text-brand transition-colors">Reference Audit</h3>
+          <p class="mt-1.5 text-sm text-gray-500 leading-relaxed">Paste a bibliography to see which references are in the corpus and which key works are missing.</p>
+          <span class="inline-flex items-center gap-1 mt-3 text-sm font-medium text-brand">Run an audit
+            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
+          </span>
+        </button>
+      </div>
+
+      <!-- Citation + visualiser link -->
+      <div class="mt-12 grid gap-4 sm:grid-cols-2">
+        <div class="bg-white border border-gray-200 rounded-2xl p-6">
+          <h3 class="text-sm font-semibold text-gray-900 mb-2">Citing this tool</h3>
+          <p class="text-sm text-gray-600 leading-relaxed">
+            If you use this tool in your research, please cite:
+          </p>
+          <p class="mt-2 text-sm text-gray-700 italic leading-relaxed">
+            Nan Tien Institute HB Research Bibliography,
+            <a href="https://visualiser.nantien.edu.au/HBbiblio/" target="_blank" rel="noopener noreferrer" class="text-brand hover:underline not-italic">visualiser.nantien.edu.au</a>.
+          </p>
+        </div>
+        <div class="bg-white border border-gray-200 rounded-2xl p-6">
+          <h3 class="text-sm font-semibold text-gray-900 mb-2">The original visualiser</h3>
+          <p class="text-sm text-gray-600 leading-relaxed">
+            Explore the interactive bibliography visualisation that this research assistant accompanies.
+          </p>
+          <a href="https://visualiser.nantien.edu.au/HBbiblio/" target="_blank" rel="noopener noreferrer"
+            class="inline-flex items-center gap-1.5 mt-3 text-sm font-medium text-brand hover:underline">
+            Open the visualiser
+            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"/></svg>
+          </a>
+        </div>
+      </div>
+
+    </div>
+  </div><!-- /tab-home -->
+
+  <!-- ═══════════════════════════════════════════════════════════════════════ -->
   <!-- Search tab                                                             -->
   <!-- ═══════════════════════════════════════════════════════════════════════ -->
-  <div id="tab-search">
+  <div id="tab-search" class="hidden">
 
     <!-- Search area -->
     <div class="bg-white border-b border-gray-100">
@@ -85,7 +177,7 @@
           <input
             id="search-input"
             type="text"
-            placeholder="Search titles and abstracts… (e.g. compassion, mindfulness, Yinshun)"
+            placeholder="Search titles, authors, and abstracts… (e.g. compassion, mindfulness, Yinshun)"
             class="w-full pl-10 pr-4 py-3 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-brand focus:border-transparent transition"
             autocomplete="off"
           />
@@ -134,10 +226,10 @@
     <div class="max-w-3xl mx-auto px-4 py-6 space-y-4">
 
       <!-- Intro hint (shown until first message) -->
-      <div id="chat-intro" class="bg-indigo-50 border border-indigo-100 rounded-xl p-5 text-sm text-indigo-800 leading-relaxed">
-        <p class="font-medium mb-1">Ask a research question about Humanistic Buddhism</p>
-        <p class="text-indigo-600 text-xs">Every response is grounded in the HB corpus and includes inline citations. Up to 5 turns per conversation.</p>
-        <p class="mt-2 text-xs text-indigo-500">Try: <em>"What does HB scholarship say about compassion and social action?"</em></p>
+      <div id="chat-intro" class="bg-brand/5 border border-brand/15 rounded-xl p-5 text-sm text-gray-700 leading-relaxed">
+        <p class="font-medium mb-1 text-gray-900">Ask a research question about Humanistic Buddhism</p>
+        <p class="text-gray-500 text-xs">Every response is grounded in the HB corpus and includes inline citations. Up to 5 turns per conversation.</p>
+        <p class="mt-2 text-xs text-gray-500">Try: <em>"What does HB scholarship say about compassion and social action?"</em></p>
       </div>
 
       <!-- Conversation thread -->
@@ -184,9 +276,9 @@
     <div class="max-w-3xl mx-auto px-4 py-6 space-y-4">
 
       <!-- Intro hint -->
-      <div class="bg-indigo-50 border border-indigo-100 rounded-xl p-5 text-sm text-indigo-800 leading-relaxed">
-        <p class="font-medium mb-1">Audit a bibliography against the HB corpus</p>
-        <p class="text-indigo-600 text-xs">Paste a reference list in any citation format. The audit shows which references are verified in the HB corpus, which fall outside it, and which key HB papers may be missing from your list.</p>
+      <div class="bg-brand/5 border border-brand/15 rounded-xl p-5 text-sm text-gray-700 leading-relaxed">
+        <p class="font-medium mb-1 text-gray-900">Audit a bibliography against the HB corpus</p>
+        <p class="text-gray-500 text-xs">Paste a reference list in any citation format. The audit shows which references are verified in the HB corpus, which fall outside it, and which key HB papers may be missing from your list.</p>
       </div>
 
       <!-- Input -->
@@ -215,6 +307,18 @@
     </div>
   </div><!-- /tab-audit -->
 
+  <!-- Footer -->
+  <footer class="mt-auto border-t border-gray-200 bg-white">
+    <div class="max-w-5xl mx-auto px-4 py-6 text-xs text-gray-500 flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-4">
+      <p class="flex-1">
+        <span class="font-medium text-gray-600">Nan Tien Institute</span> · Humanistic Buddhism Research Bibliography.
+        Please cite as <span class="italic">Nan Tien Institute HB Research Bibliography, visualiser.nantien.edu.au</span>.
+      </p>
+      <a href="https://visualiser.nantien.edu.au/HBbiblio/" target="_blank" rel="noopener noreferrer" class="text-brand hover:underline whitespace-nowrap">Original visualiser ↗</a>
+      <span class="text-gray-400 whitespace-nowrap">AI answers by Gemini (gemini-3.1-flash-lite)</span>
+    </div>
+  </footer>
+
   <script>
     // ═══════════════════════════════════════════════════════════════════════
     // Shared helpers
@@ -233,12 +337,17 @@
     // Tab navigation
     // ═══════════════════════════════════════════════════════════════════════
     function switchTab(tab) {
-      ['search', 'qa', 'audit'].forEach(t => {
+      // Toggle view panels (home + the three tools)
+      ['home', 'search', 'qa', 'audit'].forEach(t => {
         document.getElementById('tab-' + t).classList.toggle('hidden', t !== tab);
+      });
+      // Highlight the active tool tab; none highlighted on home
+      ['search', 'qa', 'audit'].forEach(t => {
         document.getElementById('tab-btn-' + t).className =
           'px-5 py-3 text-sm font-medium border-b-2 -mb-px transition-colors ' +
           (t === tab ? 'border-brand text-brand' : 'border-transparent text-gray-500 hover:text-gray-700');
       });
+      window.scrollTo({ top: 0, behavior: 'smooth' });
     }
 
     // ═══════════════════════════════════════════════════════════════════════
@@ -249,7 +358,8 @@
     let corpusTotal = 0;
 
     async function init() {
-      await Promise.all([loadStats(), loadTypes()]);
+      // Stats/types are non-blocking — a failure here must not stop search loading
+      await Promise.allSettled([loadStats(), loadTypes()]);
       await doSearch();
     }
 
@@ -257,8 +367,12 @@
       const r = await fetch('/api/stats');
       const d = await r.json();
       corpusTotal = d.total;
+      const count = d.total.toLocaleString();
       document.getElementById('corpus-count').textContent =
-        `${d.total.toLocaleString()} entries · ${d.year_min}–${d.year_max}`;
+        `${count} entries · ${d.year_min}–${d.year_max}`;
+      const updated = d.last_updated ? ` · Updated ${d.last_updated}` : '';
+      document.getElementById('home-stats').textContent =
+        `${count} bibliography entries · ${d.year_min}–${d.year_max}${updated}`;
     }
 
     async function loadTypes() {
@@ -281,13 +395,22 @@
       if (state.yearTo) params.set('year_to', state.yearTo);
       if (state.type) params.set('type', state.type);
 
-      const r = await fetch(`/api/search?${params}`);
-      const data = await r.json();
-      state.total = data.total;
-      showSpinner(false);
-      renderResults(data.results);
-      renderCount(data.total, data.page, data.per_page);
-      renderPagination(data.total, data.page, data.per_page);
+      try {
+        const r = await fetch(`/api/search?${params}`);
+        if (!r.ok) throw new Error(`Server error (${r.status})`);
+        const data = await r.json();
+        state.total = data.total;
+        renderResults(data.results);
+        renderCount(data.total, data.page, data.per_page);
+        renderPagination(data.total, data.page, data.per_page);
+      } catch (e) {
+        document.getElementById('results').innerHTML =
+          `<div class="bg-red-50 border border-red-200 rounded-lg p-4 text-sm text-red-700">Could not load results. Please check your connection and try again.</div>`;
+        document.getElementById('result-count').textContent = '';
+        document.getElementById('pagination').innerHTML = '';
+      } finally {
+        showSpinner(false);
+      }
     }
 
     function triggerSearch() {
@@ -366,7 +489,7 @@
     function renderCard(e) {
       const id = `card-${e.serial_no}`;
       const hasAbstract = e.abstract && e.abstract.trim();
-      const hasUrl = e.url && e.url.trim();
+      const safeUrl = (e.url && /^https?:\/\//i.test(e.url.trim())) ? e.url.trim() : null;
       const venue = e.journal || e.book_title || e.publisher || '';
       const venueHtml = venue
         ? `<span class="text-gray-500 text-xs ml-1">· ${escHtml(venue)}</span>` : '';
@@ -396,8 +519,8 @@
           ${hasAbstract ? `
             <div id="${id}-body" class="mt-3 hidden">
               <p class="text-sm text-gray-700 leading-relaxed">${escHtml(e.abstract)}</p>
-              ${hasUrl ? `
-                <a href="${escAttr(e.url)}" target="_blank" rel="noopener noreferrer"
+              ${safeUrl ? `
+                <a href="${escAttr(safeUrl)}" target="_blank" rel="noopener noreferrer"
                   class="inline-flex items-center gap-1 mt-3 text-xs text-brand hover:underline font-medium">
                   View source
                   <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -619,7 +742,7 @@
       const title = e.title || 'Untitled';
       const venue = e.journal || e.book_title || e.publisher || '';
       const hasAbstract = e.abstract && e.abstract.trim();
-      const hasUrl = e.url && e.url.trim();
+      const safeUrl = (e.url && /^https?:\/\//i.test(e.url.trim())) ? e.url.trim() : null;
 
       return `
         <div id="${refId}" class="flex gap-2.5 text-xs scroll-mt-ref pl-2">
@@ -634,8 +757,8 @@
                 <button onclick="toggleRefDetail('${refId}-detail')"
                   class="text-brand hover:underline text-xs">Show abstract</button>
               ` : ''}
-              ${hasUrl ? `
-                <a href="${escAttr(e.url)}" target="_blank" rel="noopener noreferrer"
+              ${safeUrl ? `
+                <a href="${escAttr(safeUrl)}" target="_blank" rel="noopener noreferrer"
                   class="text-brand hover:underline text-xs">View source ↗</a>
               ` : ''}
             </div>
