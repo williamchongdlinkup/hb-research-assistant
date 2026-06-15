@@ -93,6 +93,16 @@ A manual review of M3 surfaced a real corpus entry (Gleig, Ann 2021, "Engaged Bu
 
 **Result:** the 5-citation review test went from 4/5 → **5/5 verified** (0 false negatives); `/api/search "compassion"` unchanged at 185 (no regression); `"Gleig"` now returns his 3 works. Verified live (commit `75ea57d`).
 
+### Second pass — real-world paste robustness (commit `6982690`)
+
+Manual review then pasted citations copied directly from M2's rendered reference list — text with **no line breaks** and UI noise (`[25]`, `·`, "Show abstract", "View source ↗"). This still produced a false "not in corpus" because newline-based per-citation retrieval collapsed to one query on the whole blob. Fixed by switching to a **parse-first pipeline**:
+
+- A dedicated parse call (`_parse_citations`, temperature 0) normalises messy text → clean citation strings, stripping UI noise and keeping each title bound to its author even when concatenated.
+- `_retrieve_audit_pool` now takes the parsed citation chunks (falls back to raw lines), so per-citation retrieval works regardless of formatting.
+- Audit is now **2 Gemini calls** (parse + classify), ~3–4s warm — still well under 30s and rate-limit safe.
+
+**Result:** clean bibliographies verify 5/5 and correctly flag genuine non-HB works; the messy rendered paste no longer yields any false "not in corpus" (5 verified / 0). The only residual is that a *truncated*, title-before-author rendered paste may drop (not misclassify) one ambiguous entry — acceptable, as real bibliographies are author-first and delimited.
+
 ## Deviations from PRD
 
 | PRD spec | Actual |

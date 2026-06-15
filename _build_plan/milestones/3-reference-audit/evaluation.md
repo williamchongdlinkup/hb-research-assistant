@@ -101,9 +101,9 @@ No high-severity findings. The audit notably **improves** on M1/M2 security by a
 
 | Metric | Result | Target | Assessment |
 |---|---|---|---|
-| Audit round-trip — local | ~2.2s | <30s | ✅ ~14× margin |
-| Audit round-trip — live (Railway) | ~2.5s | <30s | ✅ ~12× margin |
-| Gemini calls per audit | 1 | — | ✅ Free-tier safe (15 req/min) |
+| Audit round-trip — local (warm) | ~3–4s | <30s | ✅ ~8× margin (2-call parse-first pipeline, see post-eval update) |
+| Audit round-trip — live (Railway) | ~3–4s warm / ~13s cold | <30s | ✅ within budget |
+| Gemini calls per audit | 2 (parse + classify) | — | ✅ Free-tier safe (15 req/min) |
 | FTS pool retrieval | sub-millisecond | — | ✅ Negligible |
 | Pool / prompt size | 60 entries × (citation line + abstract excerpt) | — | ⚠️ Largest prompt in the app; fine for flash-lite |
 
@@ -179,3 +179,5 @@ Fix (commit `75ea57d`):
 - Rebuilt `_retrieve_audit_pool` with per-citation targeted retrieval (each pasted line gets its own FTS query) unioned with the global topic pool; pool raised 60 → 80; new shared `_fts_rows` helper.
 
 Verification: the same test now returns **5/5 verified, 0 not-in-corpus** (confirmed live); `/api/search "compassion"` unchanged at 185 (no regression); `"Gleig"` returns his 3 works. This also partially mitigates the §6 data finding (abstract-less entries are now reachable via author/title match). The win is that **citation matching is no longer silently bounded by title/abstract text** — the single most important property of the audit tool.
+
+A follow-up review pasted citations copied directly from M2's rendered reference list — no line breaks, with UI noise (`[25]`, `·`, "Show abstract", "View source ↗") — which still produced one false negative because newline-based per-citation retrieval collapsed to a single blob query. Fixed (commit `6982690`) with a **parse-first pipeline**: a dedicated parse call normalises messy text into clean citation strings before retrieval + classification, and `_retrieve_audit_pool` now consumes parsed chunks (raw-line fallback). Audit is now 2 Gemini calls (~3–4s warm). Confirmed live: the messy paste returns 5 verified / 0 false not-in-corpus; clean bibliographies verify fully and still correctly flag genuine non-HB works. Residual: a truncated, title-before-author rendered paste may *drop* (not misclassify) one ambiguous entry — acceptable, since real bibliographies are author-first and delimited.
