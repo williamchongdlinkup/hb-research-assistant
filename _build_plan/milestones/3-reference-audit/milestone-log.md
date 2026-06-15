@@ -103,6 +103,14 @@ Manual review then pasted citations copied directly from M2's rendered reference
 
 **Result:** clean bibliographies verify 5/5 and correctly flag genuine non-HB works; the messy rendered paste no longer yields any false "not in corpus" (5 verified / 0). The only residual is that a *truncated*, title-before-author rendered paste may drop (not misclassify) one ambiguous entry — acceptable, as real bibliographies are author-first and delimited.
 
+### Third pass — UX + missing/suggested calibration (commits `2fd5317`, `ca24919`)
+
+From continued manual review:
+- **Tooltip on the pool-size line** ("Compared against N candidate HB entries") explaining the N-of-1,833 candidate pool (corpus total read live from `/api/stats`).
+- **Summary counts are now clickable anchors** that scroll to their section (Verified / Not in corpus / Missing / Suggested), with a `scroll-mt-20` offset.
+- **Sharpened Missing vs Suggested**: *Missing* = works CENTRAL to the bibliography's core topic (foundational/directly on-point), ordered by importance; *Suggested* = relevant-but-peripheral adjacent reading, with ties broken toward Suggested. The model is told NOT to pad to a quota.
+- **Dropped the fixed "5"**: counts are importance-driven (could be more, fewer, or none); the server-side cap was raised 5 → 15 purely as a defensive backstop. In testing a Tzu Chi-heavy bibliography moved from a forced 5 missing to 2 central missing + 2 peripheral suggested, with weak/peripheral entries no longer padded in.
+
 ## Deviations from PRD
 
 | PRD spec | Actual |
