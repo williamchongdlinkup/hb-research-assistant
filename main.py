@@ -337,6 +337,10 @@ def stats():
         "year_min": row["year_min"],
         "year_max": row["year_max"],
         "last_updated": CORPUS_LAST_UPDATED,
+        # Number of configured Gemini keys (count only — never the key values).
+        # Lets the deployment confirm multi-key rotation took effect without
+        # reading Railway logs.
+        "ai_keys": len(_clients),
     }
 
 
