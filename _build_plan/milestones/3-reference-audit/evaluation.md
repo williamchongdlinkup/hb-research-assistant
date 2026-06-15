@@ -144,7 +144,7 @@ No new data-layer changes — ingestion and schema are unchanged from M1. Two co
 
 | # | Item | File | Severity | Target milestone |
 |---|---|---|---|---|
-| TD-13 | Audit recall bounded by 60-entry pool — HB papers ranking past 60 mislabeled "not in corpus" | `main.py:477` | Medium | M4 (raise pool / note limit in UI) |
+| TD-13 | Audit recall bounded by 60-entry pool — HB papers ranking past 60 mislabeled "not in corpus" | `main.py` | Medium | ✅ **Resolved 2026-06-15** (commit `75ea57d`) — root cause was author names absent from FTS; fixed by indexing authors + per-citation retrieval + pool 60→80. See post-evaluation note. |
 | TD-14 | No upper bound on pasted bibliography size | `main.py:545` | Low | M4 |
 | TD-15 | Best-effort APA, not strict APA 7 (corpus lacks parsed initials) | `index.html:754` | Low | Post-demo / data |
 
@@ -166,4 +166,16 @@ No new data-layer changes — ingestion and schema are unchanged from M1. Two co
 
 Milestone 3 meets every functional requirement (9/9) plus the approved 4th section, and the "Done when" is verified live at ~12× under the time budget. The single-call, pooled-retrieval architecture is the right call for the free tier, and the backend is defensively written — index validation, JSON-parse fallback, server-side caps, and single-bucket dedup all guard against model misbehaviour. M3 also actively reduced the project's debt (TD-01, TD-09, TD-10 resolved; TD-04 improved). The one substantive limitation is the 60-entry pool recall ceiling (TD-13), which can mislabel a cited HB paper as "not in corpus" in a reference-dense list — worth a small pool increase and/or a UI note, and worth exercising in M4's 20-query end-to-end pass. Nothing blocks M4.
 
-**Milestone 3 verdict: APPROVED.** All requirements met, deployed, and live-verified. Recommended before/at M4: raise or document the audit pool ceiling (TD-13), and address the still-open search-path debt (TD-02/TD-03/TD-04) during the M4 polish pass.
+**Milestone 3 verdict: APPROVED.** All requirements met, deployed, and live-verified. Recommended before/at M4: address the still-open search-path debt (TD-02/TD-03/TD-04) during the M4 polish pass.
+
+---
+
+## Post-evaluation update (2026-06-15) — TD-13 resolved via manual review
+
+A manual review with the five citations from a prior M2 Q&A response exposed a concrete instance of TD-13: **Gleig, Ann (2021), "Engaged Buddhism"** — a genuine corpus entry — was classified "not in HB corpus" (4/5 verified). Investigation showed the true root cause was deeper than the pool ceiling: **the M1 FTS index covered only `title` + `abstract`, never author names**, so a citation's surname was unmatchable and a short abstract-less title was out-ranked.
+
+Fix (commit `75ea57d`):
+- Added an `authors` column to `entries_fts` (assembled from author/editor fields); switched the table from external-content to standalone. This makes author names searchable in audit, `/api/search`, and chat retrieval.
+- Rebuilt `_retrieve_audit_pool` with per-citation targeted retrieval (each pasted line gets its own FTS query) unioned with the global topic pool; pool raised 60 → 80; new shared `_fts_rows` helper.
+
+Verification: the same test now returns **5/5 verified, 0 not-in-corpus** (confirmed live); `/api/search "compassion"` unchanged at 185 (no regression); `"Gleig"` returns his 3 works. This also partially mitigates the §6 data finding (abstract-less entries are now reachable via author/title match). The win is that **citation matching is no longer silently bounded by title/abstract text** — the single most important property of the audit tool.

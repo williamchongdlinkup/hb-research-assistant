@@ -77,11 +77,21 @@ The model returns strict JSON keyed by corpus **index** (`[N]` into the pool). `
 
 - **Three tabs now exist** (`tab-search`, `tab-qa`, `tab-audit`); `switchTab(tab)` is generalised over the array `['search','qa','audit']`. M4's landing page should route into these.
 - **`/api/audit` is stateless** like the rest — no server session state; all UI state is browser-only.
-- **Audit matching quality is bounded by the 60-entry pool.** If a bibliography cites an HB paper whose title ranks past position 60 in FTS retrieval, it can be missed as "not in corpus." Acceptable for the demo; flagged for M4 end-to-end testing.
+- **Audit retrieval now uses per-citation + global pooling (up to 80 entries) over an author-indexed FTS** (see Post-build fix). The earlier 60-entry single-pool ceiling is resolved; recall in dense bibliographies should still be spot-checked in M4 end-to-end testing.
+- **The FTS index now includes author/editor names** (`entries_fts.authors` column). `/api/search` therefore matches author names too — confirm M4 landing-page copy/search hints reflect this.
 - **Single shared `GEMINI_MODEL` constant** drives chat and audit — M4 model references should read it, not hardcode.
 - **APA output is best-effort** — if M4 wants strict APA 7, the corpus author fields need first/middle initial parsing.
 
 ---
+
+## Post-build fix (2026-06-15) — false-negative matching
+
+A manual review of M3 surfaced a real corpus entry (Gleig, Ann 2021, "Engaged Buddhism") being wrongly classified "not in HB corpus." Two root causes were fixed:
+
+1. **Author names were not in the FTS index.** `entries_fts` indexed only `title` + `abstract` (from M1), so a citation's surname ("Gleig") was unmatchable, and a short generic title with no abstract ("Engaged Buddhism") was out-ranked by longer entries. Fixed by adding an `authors` column to `entries_fts` (assembled from author/editor name fields) and switching the table from external-content to standalone. This also makes `/api/search` and chat retrieval match author names — a general improvement.
+2. **Single combined pool crowded out generic titles.** Rebuilt `_retrieve_audit_pool` to do **per-citation targeted retrieval** (each pasted line gets its own FTS query, guaranteeing its best matches enter the pool) unioned with the global topic pool; pool raised 60 → 80. New shared `_fts_rows` helper.
+
+**Result:** the 5-citation review test went from 4/5 → **5/5 verified** (0 false negatives); `/api/search "compassion"` unchanged at 185 (no regression); `"Gleig"` now returns his 3 works. Verified live (commit `75ea57d`).
 
 ## Deviations from PRD
 
