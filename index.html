@@ -774,13 +774,15 @@
         return;
       }
 
+      const total = corpusTotal ? corpusTotal.toLocaleString() : '1,833';
+      const poolTip = `To stay fast, the audit compares your bibliography against the ${data.pool_size} most relevant entries (of ${total} in the corpus), found by searching each of your citations plus the overall topic. Verified, Missing and Suggested results are all drawn from this shortlist.`;
       const summary = `
         <div class="bg-white border border-gray-200 rounded-xl shadow-sm p-4 text-sm text-gray-600 flex flex-wrap gap-x-5 gap-y-1">
-          <span><span class="font-semibold text-emerald-600">${v.length}</span> verified</span>
-          <span><span class="font-semibold text-gray-500">${nic.length}</span> outside corpus</span>
-          <span><span class="font-semibold text-amber-600">${miss.length}</span> missing</span>
-          <span><span class="font-semibold text-indigo-600">${sug.length}</span> suggested</span>
-          <span class="ml-auto text-xs text-gray-400">Compared against ${data.pool_size} candidate HB entries</span>
+          <a href="#audit-sec-verified" class="hover:underline"><span class="font-semibold text-emerald-600">${v.length}</span> verified</a>
+          <a href="#audit-sec-not-in-corpus" class="hover:underline"><span class="font-semibold text-gray-500">${nic.length}</span> outside corpus</a>
+          <a href="#audit-sec-missing" class="hover:underline"><span class="font-semibold text-amber-600">${miss.length}</span> missing</a>
+          <a href="#audit-sec-suggested" class="hover:underline"><span class="font-semibold text-indigo-600">${sug.length}</span> suggested</a>
+          <span class="ml-auto text-xs text-gray-400 cursor-help border-b border-dotted border-gray-300" title="${escAttr(poolTip)}">Compared against ${data.pool_size} candidate HB entries&nbsp;ⓘ</span>
         </div>`;
 
       const copyBtn = (miss.length + sug.length) > 0 ? `
@@ -792,21 +794,21 @@
         </div>` : '';
 
       const sections = [
-        auditSection('✅ Verified', 'In the HB corpus', v, 'entry'),
-        auditSection('⚠️ Missing', 'Key HB papers absent from your list', miss, 'entry'),
-        auditSection('💡 Suggested', 'Other relevant HB entries', sug, 'entry'),
-        auditSection('📄 Not in HB corpus', 'Your citations with no HB match', nic, 'plain'),
+        auditSection('✅ Verified', 'In the HB corpus', v, 'entry', 'verified'),
+        auditSection('⚠️ Missing', 'Key HB papers absent from your list', miss, 'entry', 'missing'),
+        auditSection('💡 Suggested', 'Other relevant HB entries', sug, 'entry', 'suggested'),
+        auditSection('📄 Not in HB corpus', 'Your citations with no HB match', nic, 'plain', 'not-in-corpus'),
       ].join('');
 
       document.getElementById('audit-results').innerHTML = summary + copyBtn + sections;
     }
 
-    function auditSection(title, subtitle, items, kind) {
+    function auditSection(title, subtitle, items, kind, anchor) {
       const body = items.length
         ? '<div class="space-y-3">' + items.map(it => auditItem(it, kind)).join('') + '</div>'
         : '<p class="text-sm text-gray-400 italic">None.</p>';
       return `
-        <div class="bg-white border border-gray-200 rounded-xl shadow-sm p-5">
+        <div id="audit-sec-${anchor}" class="bg-white border border-gray-200 rounded-xl shadow-sm p-5 scroll-mt-20">
           <div class="mb-3">
             <h3 class="text-sm font-semibold text-gray-900">${title} <span class="text-gray-400 font-normal">(${items.length})</span></h3>
             <p class="text-xs text-gray-400">${escHtml(subtitle)}</p>
