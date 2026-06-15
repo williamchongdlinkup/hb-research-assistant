@@ -472,10 +472,16 @@ but imperfect match.
 numbered entries. Most general or non-HB citations belong here. Never put a \
 parsing fragment (author-only or title-only) here — reconstruct it into its full \
 citation first.
-- missing: up to 5 numbered corpus entries NOT cited in the pasted list that are \
-important to the bibliography's topic.
-- suggested: up to 5 other relevant numbered corpus entries not already counted \
-as verified or missing.
+- missing: numbered corpus entries NOT cited in the pasted list that are CENTRAL \
+to the bibliography's core topic — works that a serious, well-read treatment of \
+this subject would be expected to engage (foundational, highly relevant, or \
+directly on-point). Include ONLY genuinely important gaps, ordered most-important \
+first. Do NOT pad to reach a quota: returning few, or even none, is correct when \
+there are no important omissions. Quality over quantity.
+- suggested: other RELEVANT but more peripheral corpus entries — useful adjacent \
+or further reading, not already counted as verified or missing. When unsure \
+whether an entry is central (missing) or merely peripheral (suggested), put it in \
+suggested. List as many or as few as are genuinely relevant.
 
 Each index may appear in at most one of verified / missing / suggested. If the \
 pasted text contains no parseable citations, return all four arrays empty.
@@ -685,10 +691,12 @@ def audit(req: AuditRequest):
         logger.error("Audit response was not valid JSON")
         return JSONResponse(status_code=502, content={"error": "Could not parse AI response. Please try again."})
 
+    # Counts are driven by genuine importance via the prompt; caps are only a
+    # defensive backstop against a pathological response flooding the UI.
     seen: set[int] = set()
     verified = _attach_entries(data.get("verified", []), entries, seen)
-    missing = _attach_entries(data.get("missing", []), entries, seen, cap=5)
-    suggested = _attach_entries(data.get("suggested", []), entries, seen, cap=5)
+    missing = _attach_entries(data.get("missing", []), entries, seen, cap=15)
+    suggested = _attach_entries(data.get("suggested", []), entries, seen, cap=15)
     not_in_corpus = [
         {"citation": str(it.get("citation", "")).strip(), "reason": str(it.get("reason", "")).strip()}
         for it in (data.get("not_in_corpus") or [])
