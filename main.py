@@ -83,12 +83,15 @@ def _build_db() -> sqlite3.Connection:
         )
     """)
 
+    # Standalone FTS table (not external-content) so we can index a derived
+    # `authors` column assembled from the author/editor name fields. Indexing
+    # author names is essential for reference-audit matching (a citation's
+    # surname must be searchable) and improves search/chat retrieval generally.
     conn.execute("""
         CREATE VIRTUAL TABLE entries_fts USING fts5(
             title,
             abstract,
-            content=entries,
-            content_rowid=rowid,
+            authors,
             tokenize='unicode61'
         )
     """)
@@ -158,8 +161,18 @@ def _build_db() -> sqlite3.Connection:
     """, rows)
 
     conn.execute("""
-        INSERT INTO entries_fts (rowid, title, abstract)
-        SELECT rowid, title, abstract FROM entries
+        INSERT INTO entries_fts (rowid, title, abstract, authors)
+        SELECT rowid, title, abstract,
+            trim(
+                coalesce(author1_last,'')  || ' ' || coalesce(author1_first,'') || ' ' ||
+                coalesce(author2_last,'')  || ' ' || coalesce(author2_first,'') || ' ' ||
+                coalesce(author3_last,'')  || ' ' || coalesce(author3_first,'') || ' ' ||
+                coalesce(author4_last,'')  || ' ' || coalesce(author4_first,'') || ' ' ||
+                coalesce(editor1_last,'')  || ' ' || coalesce(editor1_first,'') || ' ' ||
+                coalesce(editor2_last,'')  || ' ' || coalesce(editor2_first,'') || ' ' ||
+                coalesce(editor3_last,'')  || ' ' || coalesce(editor3_first,'')
+            )
+        FROM entries
     """)
 
     conn.commit()
@@ -474,10 +487,9 @@ def _parse_json(raw: str):
     return None
 
 
-def _retrieve_audit_pool(text: str, limit: int = 60) -> list[dict]:
-    """Retrieve a deduped, relevance-ranked pool of corpus entries for the whole
-    pasted bibliography — surfaces both cited HB entries (for matching) and
-    topically-related ones (for missing/suggested)."""
+def _fts_rows(text: str, limit: int):
+    """Token-level OR retrieval over title+abstract, ranked by BM25, with a
+    LIKE fallback. Returns raw sqlite rows."""
     words = re.findall(r"\b[a-zA-Z]{3,}\b", text)
     seen_terms: set[str] = set()
     terms: list[str] = []
@@ -492,7 +504,7 @@ def _retrieve_audit_pool(text: str, limit: int = 60) -> list[dict]:
         return []
     fts_query = " OR ".join(f'"{t}"' for t in terms)
     try:
-        rows = _db.execute(
+        return _db.execute(
             """
             SELECT e.* FROM entries_fts f
             JOIN entries e ON e.rowid = f.rowid
@@ -501,8 +513,43 @@ def _retrieve_audit_pool(text: str, limit: int = 60) -> list[dict]:
             [fts_query, limit],
         ).fetchall()
     except sqlite3.OperationalError:
-        return _retrieve_for_query(text, limit)
-    return [_entry_to_dict(r) for r in rows]
+        like_params = [p for t in terms for p in (f"%{t}%", f"%{t}%")]
+        conditions = " OR ".join("(e.title LIKE ? OR e.abstract LIKE ?)" for _ in terms)
+        return _db.execute(
+            f"SELECT e.* FROM entries e WHERE {conditions} LIMIT ?",
+            like_params + [limit],
+        ).fetchall()
+
+
+def _retrieve_audit_pool(text: str, limit: int = 80, per_citation: int = 5) -> list[dict]:
+    """Build a deduped candidate pool combining:
+    (1) targeted per-citation retrieval — each pasted line gets its own FTS
+        query so its best matches are guaranteed present even when the title is
+        short/generic and would be crowded out of a single combined ranking; and
+    (2) a global topic pool from the whole pasted text, filling remaining slots
+        with topically-related entries (for missing/suggested)."""
+    pool: list[dict] = []
+    seen_rowids: set[int] = set()
+
+    def _add(rows):
+        for r in rows:
+            d = _entry_to_dict(r)
+            rid = d.get("rowid")
+            if rid in seen_rowids:
+                continue
+            seen_rowids.add(rid)
+            pool.append(d)
+
+    # (1) Per-citation targeted retrieval — one small query per non-trivial line.
+    lines = [ln.strip() for ln in text.splitlines() if len(ln.strip()) >= 8]
+    for line in lines[:40]:  # cap citations processed
+        _add(_fts_rows(line, per_citation))
+
+    # (2) Global topic pool fills any remaining slots.
+    if len(pool) < limit:
+        _add(_fts_rows(text, limit))
+
+    return pool[:limit]
 
 
 def _format_audit_pool(entries: list[dict]) -> str:
@@ -550,7 +597,7 @@ def audit(req: AuditRequest):
     if not bib:
         return {"verified": [], "not_in_corpus": [], "missing": [], "suggested": [], "pool_size": 0}
 
-    entries = _retrieve_audit_pool(bib, limit=60)
+    entries = _retrieve_audit_pool(bib, limit=80)
     pool_text = _format_audit_pool(entries)
     user_content = (
         f"HB corpus entries ({len(entries)}):\n\n{pool_text}\n\n"
