@@ -440,6 +440,19 @@ bibliography maintained by Nan Tien Institute. You receive (A) a numbered list o
 HB corpus entries retrieved as potentially relevant, and (B) a bibliography \
 pasted by a user in any citation format.
 
+The pasted text is often MESSY — copied from a PDF, web page, or app interface. \
+Before classifying, normalise it:
+- Strip interface noise and citation markers, never treating them as content: \
+bracketed reference numbers like "[25]", bullet/middot separators ("·"), and \
+label text such as "Show abstract", "Hide abstract", and "View source" (with or \
+without arrows like "↗").
+- Entries may run together with no line breaks. Reconstruct each distinct work, \
+keeping its title bound to its own author(s) and year even when concatenated with \
+neighbouring entries. A fragment that is ONLY an author + year (no title), or \
+ONLY a title (no author), is part of an adjacent entry — merge it; never emit a \
+title-only or author-only fragment as its own citation.
+- Identify each work by BOTH its title and its author.
+
 Classify using ONLY the numbered corpus entries provided. Never invent entries \
 and never use an index number that is not in the list.
 
@@ -455,8 +468,10 @@ Definitions:
 - verified: a pasted citation that clearly refers to one of the numbered corpus \
 entries. Use "high" for a near-exact title+author match, "probable" for a likely \
 but imperfect match.
-- not_in_corpus: pasted citations that match none of the numbered entries. Most \
-general or non-HB citations belong here.
+- not_in_corpus: COMPLETE pasted works (title + author) that match none of the \
+numbered entries. Most general or non-HB citations belong here. Never put a \
+parsing fragment (author-only or title-only) here — reconstruct it into its full \
+citation first.
 - missing: up to 5 numbered corpus entries NOT cited in the pasted list that are \
 important to the bibliography's topic.
 - suggested: up to 5 other relevant numbered corpus entries not already counted \
@@ -521,13 +536,15 @@ def _fts_rows(text: str, limit: int):
         ).fetchall()
 
 
-def _retrieve_audit_pool(text: str, limit: int = 80, per_citation: int = 5) -> list[dict]:
+def _retrieve_audit_pool(chunks: list[str], limit: int = 80, per_chunk: int = 6) -> list[dict]:
     """Build a deduped candidate pool combining:
-    (1) targeted per-citation retrieval — each pasted line gets its own FTS
+    (1) targeted per-citation retrieval — each parsed citation gets its own FTS
         query so its best matches are guaranteed present even when the title is
         short/generic and would be crowded out of a single combined ranking; and
-    (2) a global topic pool from the whole pasted text, filling remaining slots
-        with topically-related entries (for missing/suggested)."""
+    (2) a global topic pool over all citations, filling remaining slots with
+        topically-related entries (for missing/suggested).
+    `chunks` are parsed citation strings (preferred) or raw lines as a fallback —
+    so retrieval is robust even to pastes with no line breaks."""
     pool: list[dict] = []
     seen_rowids: set[int] = set()
 
@@ -540,14 +557,14 @@ def _retrieve_audit_pool(text: str, limit: int = 80, per_citation: int = 5) -> l
             seen_rowids.add(rid)
             pool.append(d)
 
-    # (1) Per-citation targeted retrieval — one small query per non-trivial line.
-    lines = [ln.strip() for ln in text.splitlines() if len(ln.strip()) >= 8]
-    for line in lines[:40]:  # cap citations processed
-        _add(_fts_rows(line, per_citation))
+    # (1) Per-citation targeted retrieval.
+    for c in chunks[:40]:  # cap citations processed
+        if len(c.strip()) >= 8:
+            _add(_fts_rows(c, per_chunk))
 
     # (2) Global topic pool fills any remaining slots.
     if len(pool) < limit:
-        _add(_fts_rows(text, limit))
+        _add(_fts_rows(" ".join(chunks), limit))
 
     return pool[:limit]
 
@@ -588,6 +605,46 @@ def _attach_entries(items, entries, seen, cap=None):
     return out
 
 
+_PARSE_SYSTEM_PROMPT = """\
+You extract bibliographic references from messy pasted text — often copied from a \
+PDF, web page, or app interface, frequently with NO line breaks. Return STRICT \
+JSON ONLY: {{"citations": ["author(s), year, title", ...]}} — one string per \
+distinct work.
+
+Rules:
+- Strip interface noise; never treat it as content: bracketed numbers like \
+"[25]", middot separators "·", and labels such as "Show abstract", "Hide \
+abstract", "View source", and arrows "↗".
+- Keep each title bound to its own author(s) and year, even when works run \
+together with no separators. Never split one work into two, nor merge two into \
+one. Never emit an author-only or title-only fragment.
+- Preserve original wording of titles and names; do not translate or abbreviate.
+- If there are no references, return {{"citations": []}}.
+"""
+
+
+def _parse_citations(text: str) -> list[str]:
+    """First-pass parse: turn messy pasted text into clean citation strings so
+    retrieval can run per-citation regardless of input formatting."""
+    try:
+        resp = _gemini_client.models.generate_content(
+            model=GEMINI_MODEL,
+            contents=text,
+            config=genai_types.GenerateContentConfig(
+                system_instruction=_PARSE_SYSTEM_PROMPT,
+                response_mime_type="application/json",
+                temperature=0.0,
+            ),
+        )
+        data = _parse_json(resp.text)
+    except Exception:
+        logger.exception("Gemini citation parse failed")
+        return []
+    if not isinstance(data, dict):
+        return []
+    return [str(c).strip() for c in (data.get("citations") or []) if str(c).strip()]
+
+
 @app.post("/api/audit")
 def audit(req: AuditRequest):
     if not _gemini_client:
@@ -597,11 +654,16 @@ def audit(req: AuditRequest):
     if not bib:
         return {"verified": [], "not_in_corpus": [], "missing": [], "suggested": [], "pool_size": 0}
 
-    entries = _retrieve_audit_pool(bib, limit=80)
+    # Parse first so retrieval and classification work on clean citations even
+    # when the paste has UI noise or no line breaks.
+    parsed = _parse_citations(bib)
+    chunks = parsed if parsed else [ln.strip() for ln in bib.splitlines() if ln.strip()]
+    entries = _retrieve_audit_pool(chunks, limit=80)
     pool_text = _format_audit_pool(entries)
+    clean_bib = "\n".join(f"- {c}" for c in parsed) if parsed else bib
     user_content = (
         f"HB corpus entries ({len(entries)}):\n\n{pool_text}\n\n"
-        f"--- Pasted bibliography to audit ---\n\n{bib}"
+        f"--- Pasted bibliography to audit ---\n\n{clean_bib}"
     )
 
     try:
