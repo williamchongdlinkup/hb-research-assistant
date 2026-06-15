@@ -4,6 +4,7 @@ import logging
 import sqlite3
 import os
 import re
+import threading
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Optional
@@ -27,12 +28,110 @@ ABSTRACT_EXCERPT_LEN = 250
 # so the landing page reads it live — editable in one place when the corpus is
 # swapped (no template change needed).
 CORPUS_LAST_UPDATED = "December 2025"
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
 GEMINI_MODEL = "gemini-3.1-flash-lite"
 
-_gemini_client: genai.Client | None = None
-if GEMINI_API_KEY:
-    _gemini_client = genai.Client(api_key=GEMINI_API_KEY)
+
+def _load_api_keys() -> list[str]:
+    """Collect one or more Gemini API keys from the environment so load can be
+    spread across several free-tier keys (each has its own RPM/TPM/RPD quota).
+    Accepts either a single `GEMINI_API_KEYS` list (comma/space/newline
+    separated) or `GEMINI_API_KEY` plus numbered `GEMINI_API_KEY_2..8`.
+    Order is preserved and duplicates dropped. A single key behaves exactly as
+    before."""
+    keys: list[str] = []
+    multi = os.getenv("GEMINI_API_KEYS", "")
+    if multi.strip():
+        keys = [k.strip() for k in re.split(r"[,\s]+", multi) if k.strip()]
+    else:
+        primary = os.getenv("GEMINI_API_KEY", "").strip()
+        if primary:
+            keys.append(primary)
+        for i in range(2, 9):
+            k = os.getenv(f"GEMINI_API_KEY_{i}", "").strip()
+            if k:
+                keys.append(k)
+    seen: set[str] = set()
+    uniq: list[str] = []
+    for k in keys:
+        if k not in seen:
+            seen.add(k)
+            uniq.append(k)
+    return uniq
+
+
+_API_KEYS = _load_api_keys()
+_clients: list[genai.Client] = [genai.Client(api_key=k) for k in _API_KEYS]
+_client_lock = threading.Lock()
+_client_idx = 0
+if _clients:
+    logger.info("Gemini configured with %d API key(s)", len(_clients))
+
+
+def _client_order() -> list[genai.Client]:
+    """Return all clients, rotated so each request starts at the next key
+    (round-robin load spreading). Callers iterate the list to fail over to the
+    next key when one is rate-limited/exhausted."""
+    global _client_idx
+    if not _clients:
+        return []
+    with _client_lock:
+        start = _client_idx
+        _client_idx = (_client_idx + 1) % len(_clients)
+    return _clients[start:] + _clients[:start]
+
+
+def _is_quota_error(exc: Exception) -> bool:
+    """True for rate-limit / quota-exhausted / transient-overload errors that
+    are worth retrying on a *different* key."""
+    code = getattr(exc, "code", None) or getattr(exc, "status_code", None)
+    if code in (429, 503):
+        return True
+    msg = str(exc).upper()
+    return any(t in msg for t in ("RESOURCE_EXHAUSTED", "RATE_LIMIT", "QUOTA", "UNAVAILABLE", "429", "503"))
+
+
+def _generate_with_rotation(**kwargs):
+    """Run models.generate_content, spreading load across keys and failing over
+    to the next key on a quota/rate error. Raises the last error if all keys
+    fail (the caller's try/except turns that into a 502)."""
+    clients = _client_order()
+    if not clients:
+        raise RuntimeError("AI service not configured")
+    last_exc: Exception | None = None
+    for i, client in enumerate(clients):
+        try:
+            return client.models.generate_content(**kwargs)
+        except Exception as exc:  # noqa: BLE001 — re-raised below
+            last_exc = exc
+            if _is_quota_error(exc) and i < len(clients) - 1:
+                logger.warning("Gemini key %d rate-limited/exhausted; failing over", i + 1)
+                continue
+            raise
+    raise last_exc  # pragma: no cover
+
+
+def _chat_with_rotation(system_prompt: str, history: list, message: str):
+    """Create a chat session and send one message, with the same round-robin +
+    failover behaviour as _generate_with_rotation."""
+    clients = _client_order()
+    if not clients:
+        raise RuntimeError("AI service not configured")
+    last_exc: Exception | None = None
+    for i, client in enumerate(clients):
+        try:
+            session = client.chats.create(
+                model=GEMINI_MODEL,
+                config=genai_types.GenerateContentConfig(system_instruction=system_prompt),
+                history=history,
+            )
+            return session.send_message(message)
+        except Exception as exc:  # noqa: BLE001 — re-raised below
+            last_exc = exc
+            if _is_quota_error(exc) and i < len(clients) - 1:
+                logger.warning("Gemini key %d rate-limited/exhausted; failing over", i + 1)
+                continue
+            raise
+    raise last_exc  # pragma: no cover
 
 _db: sqlite3.Connection = None
 
@@ -426,7 +525,7 @@ def _build_system_prompt(entries: list[dict]) -> str:
 
 @app.post("/api/chat")
 def chat(req: ChatRequest):
-    if not _gemini_client:
+    if not _clients:
         return JSONResponse(status_code=503, content={"error": "AI service not configured."})
 
     entries = _retrieve_for_query(req.message)
@@ -439,12 +538,7 @@ def chat(req: ChatRequest):
         for m in req.history
     ]
     try:
-        chat_session = _gemini_client.chats.create(
-            model=GEMINI_MODEL,
-            config=genai_types.GenerateContentConfig(system_instruction=system_prompt),
-            history=gemini_history,
-        )
-        response = chat_session.send_message(req.message)
+        response = _chat_with_rotation(system_prompt, gemini_history, req.message)
         answer = response.text
     except Exception:
         logger.exception("Gemini chat generation failed")
@@ -536,19 +630,38 @@ def _parse_json(raw: str):
     return None
 
 
-def _fts_rows(text: str, limit: int):
-    """Token-level OR retrieval over title+abstract, ranked by BM25, with a
-    LIKE fallback. Returns raw sqlite rows."""
-    words = re.findall(r"\b[a-zA-Z]{3,}\b", text)
+_CJK_RE = re.compile(r"[㐀-鿿豈-﫿぀-ヿ]")
+
+
+def _extract_terms(text: str) -> list[str]:
+    """Extract searchable terms from arbitrary text. Unlike a bare
+    [a-zA-Z]{3,} scan, this keeps Unicode letters — so accented Latin and
+    Pali/Sanskrit diacritics (ü, ñ, ā, Ś) survive — and keeps short CJK runs
+    (e.g. 佛教, 人間佛教), which the unicode61 FTS index stores as whole tokens.
+    Without this, Chinese-language citations yield no terms and cannot be
+    matched against the bilingual corpus. Latin tokens still require length ≥ 3
+    to avoid noise ("et", "al", "de"); CJK runs are kept at length ≥ 2."""
+    raw = re.findall(r"[^\W\d_]+", text, re.UNICODE)
     seen_terms: set[str] = set()
     terms: list[str] = []
-    for w in words:
+    for w in raw:
+        is_cjk = bool(_CJK_RE.search(w))
+        if not is_cjk and len(w) < 3:
+            continue
+        if is_cjk and len(w) < 2:
+            continue
         lw = w.lower()
         if lw in _STOPWORDS or lw in seen_terms:
             continue
         seen_terms.add(lw)
         terms.append(w)
-    terms = terms[:120]  # cap query size
+    return terms[:120]  # cap query size
+
+
+def _fts_rows(text: str, limit: int):
+    """Token-level OR retrieval over title+abstract+authors, ranked by BM25,
+    with a LIKE fallback. Returns raw sqlite rows."""
+    terms = _extract_terms(text)
     if not terms:
         return []
     fts_query = " OR ".join(f'"{t}"' for t in terms)
@@ -570,35 +683,64 @@ def _fts_rows(text: str, limit: int):
         ).fetchall()
 
 
-def _retrieve_audit_pool(chunks: list[str], limit: int = 80, per_chunk: int = 6) -> list[dict]:
+_POOL_BASE = 40          # floor pool size (breadth for missing/suggested on tiny bibs)
+_POOL_PER_CITATION = 4   # extra slots granted per cited work
+_POOL_MAX = 150          # ceiling — ~15K classify tokens, well within 250K TPM
+_MAX_CITATIONS = 40      # citations processed for targeted retrieval
+_PER_CHUNK = 6           # targeted matches retrieved per citation
+
+
+def _retrieve_audit_pool(chunks: list[str]) -> list[dict]:
     """Build a deduped candidate pool combining:
     (1) targeted per-citation retrieval — each parsed citation gets its own FTS
-        query so its best matches are guaranteed present even when the title is
+        query so its best matches are present even when the title is
         short/generic and would be crowded out of a single combined ranking; and
     (2) a global topic pool over all citations, filling remaining slots with
         topically-related entries (for missing/suggested).
+
+    The pool size is **adaptive** — it grows with the number of cited works
+    (``base + per_citation * n``, capped at ``_POOL_MAX``) rather than a flat 80,
+    so small bibliographies stay lean (faster, less noise) while large review
+    bibliographies get the room they need.
+
+    Targeted matches are merged **round-robin by rank** (every citation's #1
+    before any citation's #2, …). This guarantees each citation contributes its
+    best matches regardless of its position in the list and regardless of how
+    many citations there are — eliminating the earlier order bias where a flat
+    cap silently dropped citations near the end of a long bibliography.
+
     `chunks` are parsed citation strings (preferred) or raw lines as a fallback —
     so retrieval is robust even to pastes with no line breaks."""
+    eligible = [c for c in chunks[:_MAX_CITATIONS] if len(c.strip()) >= 8]
+    limit = min(_POOL_MAX, _POOL_BASE + _POOL_PER_CITATION * len(eligible)) if eligible else _POOL_BASE
+
     pool: list[dict] = []
     seen_rowids: set[int] = set()
 
-    def _add(rows):
-        for r in rows:
-            d = _entry_to_dict(r)
-            rid = d.get("rowid")
-            if rid in seen_rowids:
-                continue
-            seen_rowids.add(rid)
-            pool.append(d)
+    def _add(d) -> bool:
+        rid = d.get("rowid")
+        if rid is None or rid in seen_rowids or len(pool) >= limit:
+            return False
+        seen_rowids.add(rid)
+        pool.append(d)
+        return True
 
-    # (1) Per-citation targeted retrieval.
-    for c in chunks[:40]:  # cap citations processed
-        if len(c.strip()) >= 8:
-            _add(_fts_rows(c, per_chunk))
+    # (1) Targeted per-citation retrieval, merged round-robin by rank so every
+    # citation's best matches enter before any citation's lower-ranked ones.
+    per_lists = [[_entry_to_dict(r) for r in _fts_rows(c, _PER_CHUNK)] for c in eligible]
+    for depth in range(_PER_CHUNK):
+        if len(pool) >= limit:
+            break
+        for lst in per_lists:
+            if depth < len(lst):
+                _add(lst[depth])
 
-    # (2) Global topic pool fills any remaining slots.
+    # (2) Global topic pool fills any remaining slots (candidates for
+    # missing/suggested), never displacing the protected targeted matches above.
     if len(pool) < limit:
-        _add(_fts_rows(" ".join(chunks), limit))
+        for r in _fts_rows(" ".join(chunks), limit):
+            if not _add(_entry_to_dict(r)) and len(pool) >= limit:
+                break
 
     return pool[:limit]
 
@@ -661,7 +803,7 @@ def _parse_citations(text: str) -> list[str]:
     """First-pass parse: turn messy pasted text into clean citation strings so
     retrieval can run per-citation regardless of input formatting."""
     try:
-        resp = _gemini_client.models.generate_content(
+        resp = _generate_with_rotation(
             model=GEMINI_MODEL,
             contents=text,
             config=genai_types.GenerateContentConfig(
@@ -681,7 +823,7 @@ def _parse_citations(text: str) -> list[str]:
 
 @app.post("/api/audit")
 def audit(req: AuditRequest):
-    if not _gemini_client:
+    if not _clients:
         return JSONResponse(status_code=503, content={"error": "AI service not configured."})
 
     bib = (req.bibliography or "").strip()
@@ -692,7 +834,7 @@ def audit(req: AuditRequest):
     # when the paste has UI noise or no line breaks.
     parsed = _parse_citations(bib)
     chunks = parsed if parsed else [ln.strip() for ln in bib.splitlines() if ln.strip()]
-    entries = _retrieve_audit_pool(chunks, limit=80)
+    entries = _retrieve_audit_pool(chunks)
     pool_text = _format_audit_pool(entries)
     clean_bib = "\n".join(f"- {c}" for c in parsed) if parsed else bib
     user_content = (
@@ -701,7 +843,7 @@ def audit(req: AuditRequest):
     )
 
     try:
-        response = _gemini_client.models.generate_content(
+        response = _generate_with_rotation(
             model=GEMINI_MODEL,
             contents=user_content,
             config=genai_types.GenerateContentConfig(
