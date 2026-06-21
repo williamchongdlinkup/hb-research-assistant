@@ -13,7 +13,7 @@ from google import genai
 from google.genai import types as genai_types
 from dotenv import load_dotenv
 from fastapi import FastAPI, Query
-from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
@@ -148,6 +148,31 @@ class ChatRequest(BaseModel):
 
 class AuditRequest(BaseModel):
     bibliography: str
+
+
+class StructuredConcept(BaseModel):
+    term: str = ""
+    alts: list[str] = []
+
+
+class StructuredQuery(BaseModel):
+    """A smart-search interpretation the user has hand-edited in the UI (e.g.
+    removed a term or a synonym). Run verbatim against the corpus — no LLM."""
+    must: list[StructuredConcept] = []
+    any: list[StructuredConcept] = []
+    exclude: list[str] = []
+    author: Optional[str] = None
+    year_from: Optional[int] = None
+    year_to: Optional[int] = None
+    type: Optional[str] = None
+    page: int = 1
+    per_page: int = 20
+
+
+class ExportRequest(BaseModel):
+    ids: list[str] = []                 # serial_no (sNo) values, in display order
+    format: str = "csv"                 # csv | ris | bibtex | rtf | txt
+    style: str = "chicago"              # chicago | apa | mla  (for rtf/txt)
 
 
 def _build_db() -> sqlite3.Connection:
@@ -352,6 +377,90 @@ def types():
     return [r["type"] for r in rows]
 
 
+# ── Search core (shared by plain /api/search and AI /api/smart-search) ────────
+
+def _filter_conditions(year_from, year_to, type_):
+    """Build the column-filter WHERE fragments common to every search path."""
+    conditions: list[str] = []
+    params: list = []
+    if year_from is not None:
+        conditions.append("e.year >= ?")
+        params.append(year_from)
+    if year_to is not None:
+        conditions.append("e.year <= ?")
+        params.append(year_to)
+    if type_:
+        conditions.append("e.type = ?")
+        params.append(type_)
+    return conditions, params
+
+
+def _search_core(fts_match: str, year_from, year_to, type_, page, per_page) -> dict:
+    """Run a search given an already-compiled FTS5 MATCH string (or "" for a
+    filter-only browse). Raises sqlite3.OperationalError if the MATCH syntax is
+    invalid — the caller decides how to fall back."""
+    conditions, params = _filter_conditions(year_from, year_to, type_)
+    offset = (page - 1) * per_page
+
+    if fts_match:
+        where = ("AND " + " AND ".join(conditions)) if conditions else ""
+        count_sql = f"SELECT COUNT(*) as cnt FROM entries_fts f JOIN entries e ON e.rowid = f.rowid WHERE entries_fts MATCH ? {where}"
+        data_sql = f"SELECT e.*, rank FROM entries_fts f JOIN entries e ON e.rowid = f.rowid WHERE entries_fts MATCH ? {where} ORDER BY rank LIMIT ? OFFSET ?"
+        mp = [fts_match] + params
+    else:
+        where = ("WHERE " + " AND ".join(conditions)) if conditions else ""
+        count_sql = f"SELECT COUNT(*) as cnt FROM entries e {where}"
+        data_sql = f"SELECT e.* FROM entries e {where} ORDER BY e.year DESC, e.title LIMIT ? OFFSET ?"
+        mp = params[:]
+
+    total = _db.execute(count_sql, mp).fetchone()["cnt"]
+    rows = _db.execute(data_sql, mp + [per_page, offset]).fetchall()
+    return {
+        "total": total,
+        "page": page,
+        "per_page": per_page,
+        "results": [_entry_to_dict(r) for r in rows],
+    }
+
+
+def _like_search(q: str, year_from, year_to, type_, page, per_page) -> dict:
+    """Last-resort LIKE search used when an FTS MATCH string fails to parse."""
+    conditions, params = _filter_conditions(year_from, year_to, type_)
+    like_q = f"%{q}%"
+    conditions.append("(e.title LIKE ? OR e.abstract LIKE ?)")
+    params += [like_q, like_q]
+    where = "WHERE " + " AND ".join(conditions)
+    offset = (page - 1) * per_page
+    total = _db.execute(f"SELECT COUNT(*) as cnt FROM entries e {where}", params).fetchone()["cnt"]
+    rows = _db.execute(
+        f"SELECT e.* FROM entries e {where} ORDER BY e.year DESC LIMIT ? OFFSET ?",
+        params + [per_page, offset],
+    ).fetchall()
+    return {
+        "total": total,
+        "page": page,
+        "per_page": per_page,
+        "results": [_entry_to_dict(r) for r in rows],
+    }
+
+
+def _plain_fts_match(q: str) -> str:
+    """Tokenise on whitespace and AND the terms together (each quoted so FTS5
+    special characters can't break the query). Empty/whitespace -> "" (browse)."""
+    if not q or not q.strip():
+        return ""
+    terms = [t.replace('"', '""') for t in q.split() if t.strip()]
+    return " ".join(f'"{t}"' for t in terms) if terms else f'"{q.strip()}"'
+
+
+def _plain_search(q: str, year_from, year_to, type_, page, per_page) -> dict:
+    """The classic keyword search: whitespace-AND FTS, with LIKE fallback."""
+    try:
+        return _search_core(_plain_fts_match(q), year_from, year_to, type_, page, per_page)
+    except sqlite3.OperationalError:
+        return _like_search(q or "", year_from, year_to, type_, page, per_page)
+
+
 @app.get("/api/search")
 def search(
     q: str = Query(default=""),
@@ -361,88 +470,643 @@ def search(
     page: int = Query(default=1, ge=1),
     per_page: int = Query(default=20, ge=1, le=100),
 ):
-    params: list = []
-    conditions: list[str] = []
+    return _plain_search(q, year_from, year_to, type, page, per_page)
 
-    if year_from is not None:
-        conditions.append("e.year >= ?")
-        params.append(year_from)
-    if year_to is not None:
-        conditions.append("e.year <= ?")
-        params.append(year_to)
-    if type:
-        conditions.append("e.type = ?")
-        params.append(type)
 
-    where_clause = ("AND " + " AND ".join(conditions)) if conditions else ""
+# ── AI smart search: natural language -> structured query -> corpus ───────────
 
-    if q.strip():
-        # Tokenise on whitespace and AND the terms together (each term quoted so
-        # FTS5 special characters can't break the query). This matches entries
-        # that contain ALL terms anywhere, rather than only the exact adjacent
-        # phrase — so "environment ecology" or "gender women" return results
-        # instead of zero. A single whitespace-free token (incl. a CJK string)
-        # collapses to one quoted term, preserving prior behaviour.
-        terms = [t.replace('"', '""') for t in q.split() if t.strip()]
-        fts_match = " ".join(f'"{t}"' for t in terms) if terms else f'"{q.strip()}"'
-        count_sql = f"""
-            SELECT COUNT(*) as cnt
-            FROM entries_fts f
-            JOIN entries e ON e.rowid = f.rowid
-            WHERE entries_fts MATCH ?
-            {where_clause}
-        """
-        data_sql = f"""
-            SELECT e.*, rank
-            FROM entries_fts f
-            JOIN entries e ON e.rowid = f.rowid
-            WHERE entries_fts MATCH ?
-            {where_clause}
-            ORDER BY rank
-            LIMIT ? OFFSET ?
-        """
-        match_params = [fts_match] + params
-    else:
-        count_sql = f"""
-            SELECT COUNT(*) as cnt
-            FROM entries e
-            WHERE 1=1
-            {where_clause.replace('AND ', 'AND ', 1) if conditions else ''}
-        """
-        data_sql = f"""
-            SELECT e.*
-            FROM entries e
-            WHERE 1=1
-            {where_clause.replace('AND ', 'AND ', 1) if conditions else ''}
-            ORDER BY e.year DESC, e.title
-            LIMIT ? OFFSET ?
-        """
-        match_params = params[:]
+_SMART_SEARCH_PROMPT = """\
+You convert a researcher's natural-language query into a STRUCTURED search over a \
+Humanistic Buddhism (HB) research bibliography. The corpus is bilingual \
+(English + Chinese) and each entry has a title, abstract, and author names.
+
+Return STRICT JSON ONLY — no markdown fences, no commentary — with EXACTLY this shape:
+{{
+  "must":    [{{"term": "<keyword or phrase>", "alts": ["<synonym/translation>", ...]}}],
+  "any":     [{{"term": "<keyword or phrase>", "alts": [...]}}],
+  "exclude": ["<keyword>", ...],
+  "author":  "<surname or full name>" or null,
+  "year_from": <int> or null,
+  "year_to":   <int> or null,
+  "type": <one of the allowed types below, exactly> or null,
+  "summary": "<one short plain-English restatement of the search>"
+}}
+
+Allowed "type" values (use one VERBATIM or null): {types}
+
+Rules:
+- "must" = concepts that must ALL appear (ANDed). "any" = a group where matching \
+ANY one is enough; use it only when the user explicitly lists alternatives. Most \
+queries use only "must".
+- "alts": add high-value English synonyms, spelling variants, and ROMANIZED \
+forms for HB-specific terms, people, and organisations. Examples: compassion -> \
+["karuna","karuṇā"]; Fo Guang Shan -> ["Foguangshan","FGS"]; Sheng Yen -> \
+["Shengyan"]; Tzu Chi -> ["Ciji"]; Humanistic Buddhism -> ["Renjian Fojiao"]. \
+DO NOT output Chinese characters (Han / Japanese / Korean script) anywhere — this \
+interface serves English-language users and must show only Latin-script terms. \
+Only add alts you are confident about; 2–5 per concept maximum.
+- Use "author" when the person is named as the WRITER ("work by Reinke"). If the \
+person is the SUBJECT ("studies about Sheng Yen"), put them in "must" instead.
+- Infer year filters from phrases: "after/since 2015" -> year_from 2015; "before \
+2000" -> year_to 1999; "in the 1990s" -> year_from 1990, year_to 1999; "between \
+2010 and 2020" -> both.
+- Set "type" only if the user clearly restricts the format (books, journal \
+articles, theses, chapters) AND it matches an allowed value exactly; else null.
+- Put negated concepts ("not", "excluding", "without") into "exclude".
+- Drop filler words. Use at most 8 must+any concepts total.
+
+Examples:
+Query: work by Reinke on Fo Guang Shan globalization after 2015, not the secular stuff
+{{"must":[{{"term":"Fo Guang Shan","alts":["Foguangshan","FGS"]}},{{"term":"globalization","alts":["globalisation"]}}],"any":[],"exclude":["secular"],"author":"Reinke","year_from":2015,"year_to":null,"type":null,"summary":"Reinke on Fo Guang Shan globalization since 2015, excluding secular"}}
+
+Query: books about compassion and social engagement
+{{"must":[{{"term":"compassion","alts":["karuna","karuṇā"]}},{{"term":"social engagement","alts":["engaged Buddhism","socially engaged"]}}],"any":[],"exclude":[],"author":null,"year_from":null,"year_to":null,"type":"Book","summary":"books on compassion and social engagement"}}
+
+Query: {query}
+"""
+
+
+def _norm_concept_list(value) -> list[dict]:
+    """Coerce a 'must'/'any' field into [{term, alts}], accepting strings or
+    objects and dropping malformed items."""
+    out: list[dict] = []
+    if not isinstance(value, list):
+        return out
+    for item in value:
+        if isinstance(item, str):
+            term, alts = item.strip(), []
+        elif isinstance(item, dict):
+            term = str(item.get("term", "")).strip()
+            alts = [str(a).strip() for a in (item.get("alts") or []) if str(a).strip()][:5]
+        else:
+            continue
+        # English-facing UI: never surface CJK-script synonyms even if the model
+        # produces them. The user's own term is left as-typed.
+        alts = [a for a in alts if not _CJK_RE.search(a)]
+        if term:
+            out.append({"term": term, "alts": alts})
+    return out[:8]
+
+
+def _normalize_spec(spec: dict, allowed_types: list[str]) -> Optional[dict]:
+    """Validate/clean the model's structured-query JSON. Returns None when there
+    is nothing positive to search for (no terms and no author)."""
+    must = _norm_concept_list(spec.get("must"))
+    any_ = _norm_concept_list(spec.get("any"))
+    exclude = [str(x).strip() for x in (spec.get("exclude") or []) if str(x).strip()][:8]
+
+    author = spec.get("author")
+    author = str(author).strip() if author else None
+
+    def _int(v):
+        try:
+            return int(v)
+        except (TypeError, ValueError):
+            return None
+
+    year_from, year_to = _int(spec.get("year_from")), _int(spec.get("year_to"))
+
+    type_ = spec.get("type")
+    type_ = str(type_).strip() if type_ else None
+    if type_:
+        type_ = next((t for t in allowed_types if t.lower() == type_.lower()), None)
+
+    summary = str(spec.get("summary") or "").strip()[:200]
+
+    if not (must or any_ or author):
+        return None
+    return {
+        "must": must, "any": any_, "exclude": exclude, "author": author,
+        "year_from": year_from, "year_to": year_to, "type": type_, "summary": summary,
+    }
+
+
+# Cache structured specs by query so paginating / repeating a search doesn't
+# re-hit Gemini (also keeps us well under the free-tier RPM limit). Stores the
+# normalized spec, or None for "the model couldn't structure this" — both are
+# worth not recomputing. Simple FIFO cap; the corpus/prompt are process-stable.
+_SPEC_CACHE: "dict[str, Optional[dict]]" = {}
+_SPEC_CACHE_MAX = 256
+_spec_cache_lock = threading.Lock()
+
+
+def _structure_query(nl: str, allowed_types: list[str]) -> Optional[dict]:
+    """Ask Gemini to turn a natural-language query into a structured spec.
+    Returns None on any failure so the caller can fall back to plain search.
+    Results are cached per query string."""
+    if not _clients or not nl.strip():
+        return None
+
+    key = nl.strip().lower()
+    with _spec_cache_lock:
+        if key in _SPEC_CACHE:
+            return _SPEC_CACHE[key]
+
+    prompt = _SMART_SEARCH_PROMPT.format(
+        types=", ".join(allowed_types) or "Book, Journal Article",
+        query=nl.strip(),
+    )
+    try:
+        resp = _generate_with_rotation(model=GEMINI_MODEL, contents=prompt)
+        spec = _parse_json(resp.text)
+    except Exception:  # noqa: BLE001 — any failure -> fall back to plain search
+        logger.exception("smart-search structuring failed")
+        return None  # not cached: a transient quota error may clear on retry
+
+    result = _normalize_spec(spec, allowed_types) if isinstance(spec, dict) else None
+    with _spec_cache_lock:
+        if len(_SPEC_CACHE) >= _SPEC_CACHE_MAX:
+            _SPEC_CACHE.pop(next(iter(_SPEC_CACHE)))
+        _SPEC_CACHE[key] = result
+    return result
+
+
+def _q(term: str) -> str:
+    """Quote a term as an FTS5 phrase (handles multi-word terms and specials)."""
+    return '"' + term.replace('"', '""') + '"'
+
+
+def _term_match(term: str) -> str:
+    """FTS expression for a single topic term. A multi-word term matches either
+    as an exact phrase OR as all of its words in any order — so word-order
+    differences in the corpus (e.g. author names stored "Surname Firstname",
+    so "Stefania Travagnin" still finds "Travagnin, Stefania") don't cause
+    misses. A single word (or CJK token) is just the quoted token."""
+    toks = [t for t in re.split(r"\s+", term.strip()) if t]
+    if len(toks) <= 1:
+        return _q(term)
+    conj = "(" + " AND ".join(_q(t) for t in toks) + ")"
+    return f"({_q(term)} OR {conj})"
+
+
+def _compile_fts(spec: dict) -> str:
+    """Compile a normalized spec into an FTS5 MATCH string."""
+    clauses: list[str] = []
+    for c in spec["must"]:
+        group = [c["term"]] + c["alts"]
+        clauses.append("(" + " OR ".join(_term_match(t) for t in group) + ")")
+    if spec["any"]:
+        group = []
+        for c in spec["any"]:
+            group.extend([c["term"]] + c["alts"])
+        if group:
+            clauses.append("(" + " OR ".join(_term_match(t) for t in group) + ")")
+    if spec["author"]:
+        toks = [t for t in re.split(r"\s+", spec["author"]) if t]
+        if toks:
+            clauses.append("authors : (" + " OR ".join(_q(t) for t in toks) + ")")
+    positive = " AND ".join(clauses)
+    if not positive:
+        return ""
+    if spec["exclude"]:
+        neg = " OR ".join(_q(t) for t in spec["exclude"])
+        return f"({positive}) NOT ({neg})"
+    return positive
+
+
+@app.get("/api/smart-search")
+def smart_search(
+    q: str = Query(default=""),
+    year_from: Optional[int] = Query(default=None),
+    year_to: Optional[int] = Query(default=None),
+    type: Optional[str] = Query(default=None),
+    page: int = Query(default=1, ge=1),
+    per_page: int = Query(default=20, ge=1, le=100),
+):
+    """Natural-language search: structure the query with Gemini, run it against
+    the corpus, and return the interpretation alongside the results. Falls back
+    to plain keyword search whenever the AI step is unavailable or fails."""
+    allowed_types = [
+        r["type"] for r in _db.execute(
+            "SELECT DISTINCT type FROM entries WHERE type != '' ORDER BY type"
+        ).fetchall()
+    ]
+    spec = _structure_query(q, allowed_types)
+
+    if spec is None:
+        result = _plain_search(q, year_from, year_to, type, page, per_page)
+        result["interpretation"] = None
+        result["fallback"] = True
+        return result
+
+    # Explicit UI filters, when set, override the values the model inferred.
+    eff_year_from = year_from if year_from is not None else spec["year_from"]
+    eff_year_to = year_to if year_to is not None else spec["year_to"]
+    eff_type = type if type else spec["type"]
 
     try:
-        total = _db.execute(count_sql, match_params).fetchone()["cnt"]
-        offset = (page - 1) * per_page
-        rows = _db.execute(data_sql, match_params + [per_page, offset]).fetchall()
+        result = _search_core(_compile_fts(spec), eff_year_from, eff_year_to, eff_type, page, per_page)
     except sqlite3.OperationalError:
-        # Fall back to simple LIKE search if FTS syntax fails
-        like_q = f"%{q}%"
-        like_conditions = list(conditions) + [
-            "(e.title LIKE ? OR e.abstract LIKE ?)"
-        ]
-        like_where = "AND " + " AND ".join(like_conditions)
-        like_params = params + [like_q, like_q]
-        count_sql = f"SELECT COUNT(*) as cnt FROM entries e WHERE 1=1 {like_where}"
-        data_sql = f"SELECT e.* FROM entries e WHERE 1=1 {like_where} ORDER BY e.year DESC LIMIT ? OFFSET ?"
-        total = _db.execute(count_sql, like_params).fetchone()["cnt"]
-        offset = (page - 1) * per_page
-        rows = _db.execute(data_sql, like_params + [per_page, offset]).fetchall()
+        logger.exception("smart-search FTS compile failed; falling back to plain")
+        result = _plain_search(q, year_from, year_to, type, page, per_page)
+        result["interpretation"] = None
+        result["fallback"] = True
+        return result
 
-    return {
-        "total": total,
-        "page": page,
-        "per_page": per_page,
-        "results": [_entry_to_dict(r) for r in rows],
+    result["interpretation"] = {
+        "must": spec["must"], "any": spec["any"], "exclude": spec["exclude"],
+        "author": spec["author"], "year_from": eff_year_from, "year_to": eff_year_to,
+        "type": eff_type, "summary": spec["summary"],
     }
+    result["fallback"] = False
+    return result
+
+
+@app.post("/api/structured-search")
+def structured_search(req: StructuredQuery):
+    """Run a user-edited interpretation directly (no LLM). Powers the removable
+    chips: drop a term/synonym in the UI and re-run to see the difference."""
+    page = max(1, req.page)
+    per_page = min(100, max(1, req.per_page))
+
+    allowed_types = [
+        r["type"] for r in _db.execute(
+            "SELECT DISTINCT type FROM entries WHERE type != '' ORDER BY type"
+        ).fetchall()
+    ]
+
+    def _concepts(items):
+        out = []
+        for c in items[:8]:
+            term = (c.term or "").strip()
+            if term:
+                out.append({"term": term, "alts": [a.strip() for a in (c.alts or []) if a.strip()][:5]})
+        return out
+
+    author = (req.author or "").strip() or None
+    type_ = (req.type or "").strip() or None
+    if type_:
+        type_ = next((t for t in allowed_types if t.lower() == type_.lower()), None)
+
+    spec = {
+        "must": _concepts(req.must),
+        "any": _concepts(req.any),
+        "exclude": [x.strip() for x in req.exclude if x.strip()][:8],
+        "author": author,
+    }
+
+    try:
+        result = _search_core(_compile_fts(spec), req.year_from, req.year_to, type_, page, per_page)
+    except sqlite3.OperationalError:
+        logger.exception("structured-search FTS compile failed")
+        return JSONResponse(status_code=400, content={"error": "Could not run this search."})
+
+    result["interpretation"] = {
+        "must": spec["must"], "any": spec["any"], "exclude": spec["exclude"],
+        "author": spec["author"], "year_from": req.year_from, "year_to": req.year_to,
+        "type": type_, "summary": "",
+    }
+    result["fallback"] = False
+    return result
+
+
+# ── Export selected results (citation formats, CSV, Word/RTF) ─────────────────
+
+def _export_entries(ids: list[str]) -> list[dict]:
+    """Fetch raw entry rows for the given serial numbers, preserving the order
+    the user selected them in. Capped to keep exports sane."""
+    ids = [str(i) for i in ids][:1000]
+    if not ids:
+        return []
+    placeholders = ",".join("?" for _ in ids)
+    rows = _db.execute(
+        f"SELECT * FROM entries WHERE serial_no IN ({placeholders})", ids
+    ).fetchall()
+    by_id = {str(r["serial_no"]): dict(r) for r in rows}
+    return [by_id[i] for i in ids if i in by_id]
+
+
+def _people(e: dict, kind: str) -> list[tuple[str, str]]:
+    """Extract (last, first) name pairs for authors (1–4) or editors (1–3)."""
+    n = 4 if kind == "author" else 3
+    out = []
+    for i in range(1, n + 1):
+        last = (e.get(f"{kind}{i}_last") or "").strip()
+        first = (e.get(f"{kind}{i}_first") or "").strip()
+        if last or first:
+            out.append((last, first))
+    return out
+
+
+def _pages(e: dict) -> str:
+    s = (e.get("page_start") or "").strip()
+    t = (e.get("page_end") or "").strip()
+    if s and t:
+        return f"{s}–{t}"
+    return s or t
+
+
+# Italic markers used inside formatted citations; rendered per output format.
+_I0, _I1 = "\x01", "\x02"
+def _it(s: str) -> str:
+    return f"{_I0}{s}{_I1}"
+def _strip_markers(s: str) -> str:
+    return s.replace(_I0, "").replace(_I1, "")
+
+
+def _inv(last: str, first: str) -> str:      # "Last, First"
+    return ", ".join(p for p in (last, first) if p)
+def _plain(last: str, first: str) -> str:    # "First Last"
+    return " ".join(p for p in (first, last) if p)
+def _initials(first: str) -> str:
+    return " ".join(f"{p[0]}." for p in re.split(r"[\s\-]+", first) if p)
+
+
+def _cite_chicago(e: dict) -> str:
+    people = _people(e, "author") or _people(e, "editor")
+    names = [_inv(*p) if i == 0 else _plain(*p) for i, p in enumerate(people)]
+    if not names:
+        author = ""
+    elif len(names) == 1:
+        author = names[0]
+    elif len(names) == 2:
+        author = f"{names[0]} and {names[1]}"
+    else:
+        author = ", ".join(names[:-1]) + f", and {names[-1]}"
+    yr = e.get("year") or "n.d."
+    title = (e.get("title") or "").strip().rstrip(".")
+    parts = []
+    if author:
+        parts.append(f"{author}.")
+    parts.append(f"{yr}.")
+    if e.get("journal"):
+        parts.append(f"“{title}.”")
+        seg = _it((e["journal"]).strip().rstrip("."))
+        if (e.get("volume") or "").strip():
+            seg += f" {e['volume'].strip()}"
+        if (e.get("issue") or "").strip():
+            seg += f", no. {e['issue'].strip()}"
+        seg += f" ({yr})"
+        if _pages(e):
+            seg += f": {_pages(e)}"
+        parts.append(seg + ".")
+    elif e.get("book_title"):
+        parts.append(f"“{title}.”")
+        eds = _people(e, "editor")
+        inb = f"In {_it(e['book_title'].strip().rstrip('.'))}"
+        if eds:
+            inb += ", edited by " + ", ".join(_plain(*p) for p in eds)
+        if _pages(e):
+            inb += f", {_pages(e)}"
+        parts.append(inb + ".")
+        loc = ", ".join(p for p in [(e.get("city") or "").strip(), (e.get("publisher") or "").strip()] if p)
+        if loc:
+            parts.append(loc + ".")
+    else:
+        parts.append(f"{_it(title)}.")
+        if (e.get("type") or "").strip() == "Thesis":
+            pub = (e.get("publisher") or "").strip()
+            parts.append(f"PhD diss., {pub}." if pub else "Thesis.")
+        else:
+            loc = ", ".join(p for p in [(e.get("city") or "").strip(), (e.get("publisher") or "").strip()] if p)
+            if loc:
+                parts.append(loc + ".")
+    url = (e.get("url") or "").strip()
+    if url.startswith("http"):
+        parts.append(url + ".")
+    return " ".join(parts)
+
+
+def _cite_apa(e: dict) -> str:
+    people = _people(e, "author") or _people(e, "editor")
+    names = [(_inv(last, _initials(first)) if (last or first) else "") for last, first in people]
+    names = [n for n in names if n]
+    if not names:
+        author = ""
+    elif len(names) == 1:
+        author = names[0]
+    else:
+        author = ", ".join(names[:-1]) + f", & {names[-1]}"
+    yr = e.get("year") or "n.d."
+    title = (e.get("title") or "").strip().rstrip(".")
+    parts = []
+    if author:
+        parts.append(author)
+    parts.append(f"({yr}).")
+    if e.get("journal"):
+        parts.append(f"{title}.")
+        seg = _it(e["journal"].strip().rstrip("."))
+        if (e.get("volume") or "").strip():
+            seg += f", {_it(e['volume'].strip())}"
+        if (e.get("issue") or "").strip():
+            seg += f"({e['issue'].strip()})"
+        if _pages(e):
+            seg += f", {_pages(e)}"
+        parts.append(seg + ".")
+    elif e.get("book_title"):
+        parts.append(f"{title}.")
+        eds = _people(e, "editor")
+        inb = "In "
+        if eds:
+            inb += ", ".join(f"{_initials(f)} {l}".strip() for l, f in eds) + " (Eds.), "
+        inb += _it(e["book_title"].strip().rstrip("."))
+        if _pages(e):
+            inb += f" (pp. {_pages(e)})"
+        parts.append(inb + ".")
+        if (e.get("publisher") or "").strip():
+            parts.append(e["publisher"].strip() + ".")
+    else:
+        parts.append(f"{_it(title)}.")
+        if (e.get("publisher") or "").strip():
+            parts.append(e["publisher"].strip() + ".")
+    url = (e.get("url") or "").strip()
+    if url.startswith("http"):
+        parts.append(url)
+    return " ".join(parts)
+
+
+def _cite_mla(e: dict) -> str:
+    people = _people(e, "author") or _people(e, "editor")
+    if not people:
+        author = ""
+    elif len(people) == 1:
+        author = _inv(*people[0])
+    elif len(people) == 2:
+        author = f"{_inv(*people[0])}, and {_plain(*people[1])}"
+    else:
+        author = f"{_inv(*people[0])}, et al"
+    yr = e.get("year") or ""
+    title = (e.get("title") or "").strip().rstrip(".")
+    parts = []
+    if author:
+        parts.append(f"{author}.")
+    if e.get("journal"):
+        parts.append(f"“{title}.”")
+        seg = _it(e["journal"].strip().rstrip("."))
+        if (e.get("volume") or "").strip():
+            seg += f", vol. {e['volume'].strip()}"
+        if (e.get("issue") or "").strip():
+            seg += f", no. {e['issue'].strip()}"
+        if yr:
+            seg += f", {yr}"
+        if _pages(e):
+            seg += f", pp. {_pages(e)}"
+        parts.append(seg + ".")
+    elif e.get("book_title"):
+        parts.append(f"“{title}.”")
+        seg = _it(e["book_title"].strip().rstrip("."))
+        eds = _people(e, "editor")
+        if eds:
+            seg += ", edited by " + ", ".join(_plain(*p) for p in eds)
+        if (e.get("publisher") or "").strip():
+            seg += f", {e['publisher'].strip()}"
+        if yr:
+            seg += f", {yr}"
+        if _pages(e):
+            seg += f", pp. {_pages(e)}"
+        parts.append(seg + ".")
+    else:
+        parts.append(f"{_it(title)}.")
+        tail = ", ".join(p for p in [(e.get("publisher") or "").strip(), str(yr) if yr else ""] if p)
+        if tail:
+            parts.append(tail + ".")
+    url = (e.get("url") or "").strip()
+    if url.startswith("http"):
+        parts.append(url + ".")
+    return " ".join(parts)
+
+
+_CITERS = {"chicago": _cite_chicago, "apa": _cite_apa, "mla": _cite_mla}
+_RIS_TYPE = {"Journal Article": "JOUR", "Book": "BOOK", "Book Chapter": "CHAP",
+             "Conference Paper": "CPAPER", "Paper": "CPAPER", "Thesis": "THES"}
+_BIB_TYPE = {"Journal Article": "article", "Book": "book", "Book Chapter": "incollection",
+             "Conference Paper": "inproceedings", "Paper": "inproceedings", "Thesis": "phdthesis"}
+
+
+def _export_ris(entries: list[dict]) -> str:
+    out = []
+    for e in entries:
+        out.append(f"TY  - {_RIS_TYPE.get((e.get('type') or '').strip(), 'GEN')}")
+        for l, f in _people(e, "author"):
+            out.append(f"AU  - {_inv(l, f)}")
+        for l, f in _people(e, "editor"):
+            out.append(f"ED  - {_inv(l, f)}")
+        for tag, key in [("TI", "title"), ("PY", "year"), ("JO", "journal"),
+                         ("T2", "book_title"), ("VL", "volume"), ("IS", "issue"),
+                         ("SP", "page_start"), ("EP", "page_end"),
+                         ("PB", "publisher"), ("CY", "city"), ("AB", "abstract")]:
+            val = str(e.get(key) or "").strip()
+            if val:
+                out.append(f"{tag}  - {val}")
+        url = (e.get("url") or "").strip()
+        if url.startswith("http"):
+            out.append(f"UR  - {url}")
+        out.append("ER  - ")
+        out.append("")
+    return "\r\n".join(out)
+
+
+def _export_bibtex(entries: list[dict]) -> str:
+    blocks = []
+    for e in entries:
+        bt = _BIB_TYPE.get((e.get("type") or "").strip(), "misc")
+        people = _people(e, "author") or _people(e, "editor")
+        keylast = re.sub(r"[^A-Za-z]", "", people[0][0]) if people and people[0][0] else "ref"
+        key = f"{keylast or 'ref'}{e.get('year') or ''}_{(e.get('serial_no') or '').strip()}"
+        fields = []
+        au = " and ".join(_inv(l, f) for l, f in _people(e, "author"))
+        if au:
+            fields.append(("author", au))
+        ed = " and ".join(_inv(l, f) for l, f in _people(e, "editor"))
+        if ed:
+            fields.append(("editor", ed))
+        for name, k in [("title", "title"), ("year", "year"), ("journal", "journal"),
+                        ("booktitle", "book_title"), ("volume", "volume"), ("number", "issue"),
+                        ("publisher", "publisher"), ("address", "city")]:
+            val = str(e.get(k) or "").strip()
+            if val:
+                fields.append((name, val))
+        if _pages(e):
+            fields.append(("pages", _pages(e).replace("–", "--")))
+        url = (e.get("url") or "").strip()
+        if url.startswith("http"):
+            fields.append(("url", url))
+        body = ",\n".join(f"  {k} = {{{str(v).replace('{', '').replace('}', '')}}}" for k, v in fields)
+        blocks.append(f"@{bt}{{{key},\n{body}\n}}")
+    return "\n\n".join(blocks)
+
+
+def _export_csv(entries: list[dict]) -> str:
+    import io
+    buf = io.StringIO()
+    w = csv.writer(buf)
+    w.writerow(["serial_no", "type", "authors", "editors", "year", "title", "journal",
+                "book_title", "volume", "issue", "pages", "publisher", "city", "url"])
+    for e in entries:
+        w.writerow([
+            e.get("serial_no", ""), e.get("type", ""),
+            "; ".join(_inv(l, f) for l, f in _people(e, "author")),
+            "; ".join(_inv(l, f) for l, f in _people(e, "editor")),
+            e.get("year") or "", e.get("title", ""), e.get("journal", ""),
+            e.get("book_title", ""), e.get("volume", ""), e.get("issue", ""),
+            _pages(e), e.get("publisher", ""), e.get("city", ""), e.get("url", ""),
+        ])
+    return buf.getvalue()
+
+
+def _export_txt(entries: list[dict], style: str) -> str:
+    cite = _CITERS.get(style, _cite_chicago)
+    return "\r\n\r\n".join(_strip_markers(cite(e)) for e in entries)
+
+
+def _rtf_escape(s: str) -> str:
+    out = []
+    for ch in s:
+        if ch == "\\":
+            out.append("\\\\")
+        elif ch == "{":
+            out.append("\\{")
+        elif ch == "}":
+            out.append("\\}")
+        elif ch == _I0:
+            out.append("{\\i ")
+        elif ch == _I1:
+            out.append("}")
+        elif ord(ch) < 128:
+            out.append(ch)
+        else:
+            code = ord(ch)
+            code = code if code <= 0x7FFF else code - 0x10000
+            out.append(f"\\u{code}?")
+    return "".join(out)
+
+
+def _export_rtf(entries: list[dict], style: str) -> str:
+    cite = _CITERS.get(style, _cite_chicago)
+    head = r"{\rtf1\ansi\deff0{\fonttbl{\f0 Times New Roman;}}\fs24 "
+    title = ("{\\b Humanistic Buddhism Research Bibliography \\u8212? Selected References}"
+             "\\par\\pard\\par ")
+    body = " ".join("\\li360\\fi-360 " + _rtf_escape(cite(e)) + "\\par\\pard" for e in entries)
+    return head + title + body + "}"
+
+
+@app.post("/api/export")
+def export(req: ExportRequest):
+    entries = _export_entries(req.ids)
+    if not entries:
+        return JSONResponse(status_code=400, content={"error": "No entries selected."})
+    fmt = (req.format or "csv").lower()
+    style = (req.style or "chicago").lower()
+
+    if fmt == "ris":
+        content, media, ext, enc = _export_ris(entries), "application/x-research-info-systems", "ris", "utf-8"
+    elif fmt == "bibtex":
+        content, media, ext, enc = _export_bibtex(entries), "application/x-bibtex", "bib", "utf-8"
+    elif fmt == "csv":
+        content, media, ext, enc = _export_csv(entries), "text/csv", "csv", "utf-8-sig"
+    elif fmt == "rtf":
+        content, media, ext, enc = _export_rtf(entries, style), "application/rtf", "rtf", "ascii"
+    elif fmt == "txt":
+        content, media, ext, enc = _export_txt(entries, style), "text/plain", "txt", "utf-8"
+    else:
+        return JSONResponse(status_code=400, content={"error": "Unknown export format."})
+
+    data = content.encode(enc, errors="replace")
+    return Response(
+        content=data,
+        media_type=f"{media}; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="hb-bibliography.{ext}"'},
+    )
 
 
 @app.get("/", response_class=HTMLResponse)

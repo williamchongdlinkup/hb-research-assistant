@@ -170,19 +170,34 @@
     <!-- Search area -->
     <div class="bg-white border-b border-gray-100">
       <div class="max-w-5xl mx-auto px-4 py-5 space-y-3">
-        <div class="relative">
-          <svg class="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-          </svg>
-          <input
-            id="search-input"
-            type="text"
-            placeholder="Search titles, authors, and abstracts… (e.g. compassion, mindfulness, Yinshun)"
-            class="w-full pl-10 pr-4 py-3 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-brand focus:border-transparent transition"
-            autocomplete="off"
-          />
+        <div class="flex gap-2">
+          <div class="relative flex-1">
+            <svg class="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+            </svg>
+            <input
+              id="search-input"
+              type="text"
+              placeholder="Describe what you're looking for — e.g. “Reinke on Fo Guang Shan globalization after 2015, not secular”"
+              class="w-full pl-10 pr-4 py-3 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-brand focus:border-transparent transition"
+              autocomplete="off"
+            />
+          </div>
+          <button id="search-btn" onclick="triggerSearch()"
+            class="bg-brand text-white px-5 py-3 rounded-lg text-sm font-medium hover:bg-brand-dark transition-colors flex-shrink-0 disabled:opacity-50">
+            Search
+          </button>
         </div>
         <div class="flex flex-wrap gap-3 items-center">
+          <label class="flex items-start gap-1.5 cursor-pointer select-none">
+            <input id="smart-toggle" type="checkbox" checked
+              class="rounded border-gray-300 text-brand focus:ring-brand mt-0.5" />
+            <span class="leading-tight">
+              <span class="block text-xs font-medium text-gray-600">✨ Understand my question</span>
+              <span class="block text-[11px] text-gray-400">reads plain English — turn off to match exact words</span>
+            </span>
+          </label>
+          <span class="text-gray-300">|</span>
           <div class="flex items-center gap-2">
             <label class="text-xs font-medium text-gray-500 whitespace-nowrap">Year from</label>
             <input id="year-from" type="number" min="1990" max="2030" placeholder="2000"
@@ -204,13 +219,41 @@
             Clear all
           </button>
         </div>
+
+        <!-- AI interpretation of the query (smart search) -->
+        <div id="interpretation" class="hidden text-xs"></div>
+
+        <!-- First-run guidance: clickable example queries (hidden after first search) -->
+        <div id="first-run" class="text-xs text-gray-500">
+          <p class="mb-2"><span class="text-brand">✨</span> Ask in plain English — I'll find the right entries and show you exactly how I read your request, so you can fine-tune it.</p>
+          <div class="flex flex-wrap items-center gap-2">
+            <span class="text-gray-400">Try:</span>
+            <button type="button" onclick="runExample('Compassion and social engagement')"
+              class="px-2.5 py-1 rounded-full border border-gray-300 bg-white hover:border-brand hover:text-brand transition-colors">Compassion and social engagement</button>
+            <button type="button" onclick="runExample('Sheng Yen, since 2010')"
+              class="px-2.5 py-1 rounded-full border border-gray-300 bg-white hover:border-brand hover:text-brand transition-colors">Sheng Yen, since 2010</button>
+            <button type="button" onclick="runExample('Fo Guang Shan globalization, not secular')"
+              class="px-2.5 py-1 rounded-full border border-gray-300 bg-white hover:border-brand hover:text-brand transition-colors">Fo Guang Shan globalization, not secular</button>
+          </div>
+        </div>
       </div>
     </div>
 
     <!-- Results -->
     <main class="max-w-5xl mx-auto px-4 py-6">
+      <!-- Shown when the AI reading is unavailable and we silently used keyword search -->
+      <div id="fallback-banner" class="hidden mb-4 bg-amber-50 border border-amber-200 rounded-lg p-3 text-sm text-amber-800">
+        Smart reading is offline right now — I searched your exact words instead. Results may be less precise.
+      </div>
       <div class="flex items-center justify-between mb-4">
-        <p id="result-count" class="text-sm text-gray-500"></p>
+        <div class="flex items-center gap-3">
+          <label id="select-all-wrap" class="hidden items-center gap-1.5 text-xs text-gray-500 cursor-pointer select-none">
+            <input id="select-all-page" type="checkbox" onclick="toggleSelectAllPage(this.checked)"
+              class="rounded border-gray-300 text-brand focus:ring-brand" />
+            Select page
+          </label>
+          <p id="result-count" class="text-sm text-gray-500"></p>
+        </div>
         <div id="loading-spinner" class="hidden"><span class="spinner"></span></div>
       </div>
       <div id="results" class="space-y-3"></div>
@@ -307,6 +350,39 @@
     </div>
   </div><!-- /tab-audit -->
 
+  <!-- Selection / export bar (appears when results are ticked) -->
+  <div id="selection-bar" class="hidden fixed bottom-0 inset-x-0 z-20 bg-white border-t border-gray-200 shadow-[0_-2px_10px_rgba(0,0,0,0.06)]">
+    <div class="max-w-5xl mx-auto px-4 py-3 flex items-center gap-3">
+      <span id="selection-count" class="text-sm font-medium text-gray-700"></span>
+      <button onclick="clearSelection()" class="text-xs text-gray-500 hover:text-brand">Clear</button>
+      <div class="ml-auto relative">
+        <button onclick="toggleExportMenu()"
+          class="bg-brand text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-brand-dark transition-colors">
+          Export ▾
+        </button>
+        <div id="export-menu" class="hidden absolute right-0 bottom-full mb-2 w-72 bg-white border border-gray-200 rounded-xl shadow-xl p-3 text-sm">
+          <label class="block text-xs font-medium text-gray-500 mb-1">Citation style <span class="font-normal text-gray-400">(for Word &amp; text)</span></label>
+          <select id="export-style" class="w-full mb-3 px-2 py-1.5 border border-gray-300 rounded text-sm bg-white focus:outline-none focus:ring-2 focus:ring-brand">
+            <option value="chicago">Chicago (author–date)</option>
+            <option value="apa">APA (7th ed.)</option>
+            <option value="mla">MLA (9th ed.)</option>
+          </select>
+          <div class="space-y-0.5">
+            <button onclick="doExport('rtf')" class="w-full text-left px-2 py-1.5 rounded hover:bg-gray-50 transition-colors">Word document <span class="text-gray-400">(.rtf)</span></button>
+            <button onclick="doExport('txt')" class="w-full text-left px-2 py-1.5 rounded hover:bg-gray-50 transition-colors">Plain text <span class="text-gray-400">(.txt)</span></button>
+          </div>
+          <hr class="my-2 border-gray-100" />
+          <p class="text-xs font-medium text-gray-500 mb-1">Reference manager</p>
+          <div class="space-y-0.5">
+            <button onclick="doExport('ris')" class="w-full text-left px-2 py-1.5 rounded hover:bg-gray-50 transition-colors">RIS <span class="text-gray-400">— Zotero, EndNote, Mendeley</span></button>
+            <button onclick="doExport('bibtex')" class="w-full text-left px-2 py-1.5 rounded hover:bg-gray-50 transition-colors">BibTeX <span class="text-gray-400">(.bib)</span></button>
+            <button onclick="doExport('csv')" class="w-full text-left px-2 py-1.5 rounded hover:bg-gray-50 transition-colors">Spreadsheet <span class="text-gray-400">(.csv)</span></button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <!-- Footer -->
   <footer class="mt-auto border-t border-gray-200 bg-white">
     <div class="max-w-5xl mx-auto px-4 py-6 text-xs text-gray-500 flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-4">
@@ -353,9 +429,13 @@
     // ═══════════════════════════════════════════════════════════════════════
     // Search state & logic
     // ═══════════════════════════════════════════════════════════════════════
-    let state = { q: '', yearFrom: '', yearTo: '', type: '', page: 1, total: 0, perPage: 20 };
+    let state = { q: '', yearFrom: '', yearTo: '', type: '', page: 1, total: 0, perPage: 20, smart: true,
+                  structured: false, interpretation: null };
     let debounceTimer = null;
     let corpusTotal = 0;
+    // Selection persists across pages and searches so a scholar can build a set.
+    const selectedIds = new Set();
+    let currentPageIds = [];
 
     async function init() {
       // Stats/types are non-blocking — a failure here must not stop search loading
@@ -388,7 +468,13 @@
     }
 
     async function doSearch() {
+      // Smart mode only kicks in when there's a natural-language query to
+      // interpret; an empty box (filters only) always uses plain browse.
+      const useSmart = state.smart && state.q.trim();
+      const endpoint = useSmart ? '/api/smart-search' : '/api/search';
+
       showSpinner(true);
+      if (useSmart) showInterpreting();
       const params = new URLSearchParams({ page: state.page, per_page: state.perPage });
       if (state.q) params.set('q', state.q);
       if (state.yearFrom) params.set('year_from', state.yearFrom);
@@ -396,36 +482,84 @@
       if (state.type) params.set('type', state.type);
 
       try {
-        const r = await fetch(`/api/search?${params}`);
+        const r = await fetch(`${endpoint}?${params}`);
         if (!r.ok) throw new Error(`Server error (${r.status})`);
         const data = await r.json();
         state.total = data.total;
         renderResults(data.results);
         renderCount(data.total, data.page, data.per_page);
         renderPagination(data.total, data.page, data.per_page);
+        if (useSmart && !data.fallback) {
+          state.structured = false;            // fresh AI interpretation
+          state.interpretation = data.interpretation;
+          hideFallbackBanner();
+          renderInterpretation(data.interpretation, false);
+        } else if (useSmart && data.fallback) {
+          // AI was unavailable; we silently used keyword search — say so.
+          state.structured = false;
+          state.interpretation = null;
+          hideInterpretation();
+          showFallbackBanner();
+        } else {
+          state.interpretation = null;
+          hideInterpretation();
+          hideFallbackBanner();
+        }
       } catch (e) {
         document.getElementById('results').innerHTML =
           `<div class="bg-red-50 border border-red-200 rounded-lg p-4 text-sm text-red-700">Could not load results. Please check your connection and try again.</div>`;
         document.getElementById('result-count').textContent = '';
         document.getElementById('pagination').innerHTML = '';
+        hideInterpretation();
+        hideFallbackBanner();
       } finally {
         showSpinner(false);
       }
     }
 
+    function hideFirstRun() {
+      const el = document.getElementById('first-run');
+      if (el) el.classList.add('hidden');
+    }
+
+    // Click an example query: load it into the box, ensure smart mode, and run.
+    function runExample(text) {
+      const input = document.getElementById('search-input');
+      input.value = text;
+      const toggle = document.getElementById('smart-toggle');
+      toggle.checked = true;       // examples showcase smart search
+      input.focus();
+      triggerSearch();
+    }
+
     function triggerSearch() {
+      hideFirstRun();              // first real search dismisses the guidance
       state.page = 1;
       state.q = document.getElementById('search-input').value;
       state.yearFrom = document.getElementById('year-from').value;
       state.yearTo = document.getElementById('year-to').value;
       state.type = document.getElementById('type-filter').value;
+      state.smart = document.getElementById('smart-toggle').checked;
+      state.structured = false;   // a fresh query supersedes any chip edits
       updateClearBtn();
       doSearch();
     }
 
     function debounceSearch() {
+      // Live-as-you-type is only used for plain keyword search. Smart search
+      // calls the LLM, so it waits for an explicit Enter / Search-button press.
+      if (document.getElementById('smart-toggle').checked) return;
       clearTimeout(debounceTimer);
       debounceTimer = setTimeout(triggerSearch, 350);
+    }
+
+    // "Search literally instead" — drop AI interpretation for this query.
+    function searchLiteral() {
+      document.getElementById('smart-toggle').checked = false;
+      state.smart = false;
+      state.structured = false;
+      state.page = 1;
+      doSearch();
     }
 
     function clearFilters() {
@@ -434,9 +568,131 @@
       document.getElementById('year-to').value = '';
       document.getElementById('type-filter').value = '';
       state.q = ''; state.yearFrom = ''; state.yearTo = ''; state.type = '';
+      state.structured = false; state.interpretation = null;
+      hideInterpretation();
       updateClearBtn();
       state.page = 1;
       doSearch();
+    }
+
+    // ── AI interpretation panel (smart search) ───────────────────────────────
+    function hideInterpretation() {
+      const el = document.getElementById('interpretation');
+      el.classList.add('hidden');
+      el.innerHTML = '';
+    }
+
+    function showInterpreting() {
+      const el = document.getElementById('interpretation');
+      el.innerHTML = `<span class="text-gray-400"><span class="spinner align-middle" style="width:12px;height:12px;border-width:2px;"></span> Reading your request…</span>`;
+      el.classList.remove('hidden');
+    }
+
+    function showFallbackBanner() { document.getElementById('fallback-banner').classList.remove('hidden'); }
+    function hideFallbackBanner() { document.getElementById('fallback-banner').classList.add('hidden'); }
+
+    function renderInterpretation(interp, fallback) {
+      const el = document.getElementById('interpretation');
+      if (!interp) { hideInterpretation(); return; }   // AI-offline case uses the banner instead
+
+      // A removable tag: label + an × that calls the given handler.
+      const tag = (label, cls, onRemove, title) =>
+        `<span class="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-medium ${cls}">${label}` +
+        `<button onclick="${onRemove}" title="${title}" aria-label="${title}" class="ml-0.5 leading-none px-0.5 opacity-60 hover:opacity-100 font-bold">×</button></span>`;
+
+      // A topic tag: the term, plus any synonyms spelled out ("also searching: …").
+      const topicTag = (group, c, i) => {
+        const alts = (c.alts || []).length
+          ? ` <span class="font-normal opacity-70">· also searching: ` +
+            (c.alts.map((a, j) =>
+              `${escHtml(a)}<button onclick="removeAlt('${group}',${i},${j})" title="Don't search this spelling" aria-label="Remove spelling" class="ml-0.5 font-bold opacity-60 hover:opacity-100">×</button>`
+            ).join(', ')) + `</span>`
+          : '';
+        return tag(escHtml(c.term) + alts, 'bg-brand/10 text-brand', `removeConcept('${group}',${i})`, 'Remove this topic');
+      };
+
+      const mustTags = (interp.must || []).map((c, i) => topicTag('must', c, i));
+      const anyTags = (interp.any || []).map((c, i) => topicTag('any', c, i));
+
+      // Author / years / type / exclude — standalone, self-describing tags.
+      const meta = [];
+      if (interp.author)
+        meta.push(tag('Written by: ' + escHtml(interp.author), 'bg-indigo-100 text-indigo-700', 'removeAuthor()', 'Remove author'));
+      if (interp.year_from || interp.year_to) {
+        const yr = (interp.year_from && interp.year_to) ? `${interp.year_from}–${interp.year_to}`
+          : interp.year_from ? `since ${interp.year_from}` : `until ${interp.year_to}`;
+        meta.push(tag('Published ' + yr, 'bg-gray-100 text-gray-600', 'removeYears()', 'Remove year range'));
+      }
+      if (interp.type) meta.push(tag(escHtml(interp.type) + ' only', 'bg-gray-100 text-gray-600', 'removeType()', 'Remove type filter'));
+      (interp.exclude || []).forEach((t, i) =>
+        meta.push(tag('Leaving out: <span class="line-through">' + escHtml(t) + '</span>', 'bg-gray-100 text-gray-500', `removeExclude(${i})`, 'Stop excluding this')));
+
+      const hasTopics = mustTags.length || anyTags.length || interp.author;
+      const summary = interp.summary && interp.summary.trim();
+
+      const sections = [];
+      if (mustTags.length) {
+        const lbl = mustTags.length > 1 ? 'Must mention all of these:' : 'About:';
+        sections.push(`<div class="mt-1.5"><span class="text-gray-400 mr-1">${lbl}</span>${mustTags.join(' ')}</div>`);
+      }
+      if (anyTags.length)
+        sections.push(`<div class="mt-1.5"><span class="text-gray-400 mr-1">…and at least one of these:</span>${anyTags.join(' ')}</div>`);
+      if (meta.length)
+        sections.push(`<div class="mt-1.5 flex flex-wrap gap-1">${meta.join(' ')}</div>`);
+
+      el.innerHTML = `
+        <div class="bg-brand/5 border border-brand/15 rounded-lg p-3">
+          <div class="flex items-start justify-between gap-2">
+            <span class="text-gray-500 font-medium">${summary ? "Here's how I read your request:" : 'Your search:'}</span>
+            <button onclick="searchLiteral()" class="text-brand hover:underline whitespace-nowrap flex-shrink-0">Search my exact words instead</button>
+          </div>
+          ${summary ? `<p class="text-gray-700 mt-1 italic">“${escHtml(summary)}”</p>` : ''}
+          ${hasTopics ? sections.join('') :
+            `<p class="text-gray-500 mt-1.5">No topics left — showing everything that fits your filters. Search again to add a topic.</p>`}
+          ${hasTopics ? `<p class="text-gray-400 mt-2">Not quite right? Remove anything above (×) and I'll update the results instantly.</p>` : ''}
+        </div>`;
+      el.classList.remove('hidden');
+    }
+
+    // ── Editing the interpretation (removable chips) ─────────────────────────
+    function removeConcept(group, i) { state.interpretation[group].splice(i, 1); runStructured(); }
+    function removeAlt(group, i, j) { state.interpretation[group][i].alts.splice(j, 1); runStructured(); }
+    function removeExclude(i) { state.interpretation.exclude.splice(i, 1); runStructured(); }
+    function removeAuthor() { state.interpretation.author = null; runStructured(); }
+    function removeYears() { state.interpretation.year_from = null; state.interpretation.year_to = null; runStructured(); }
+    function removeType() { state.interpretation.type = null; runStructured(); }
+
+    // An edit resets to page 1, then re-runs the structured query.
+    function runStructured() {
+      state.page = 1;
+      fetchStructured();
+    }
+
+    // Re-run the (edited) interpretation directly against the corpus — no LLM.
+    async function fetchStructured() {
+      if (!state.interpretation) return;
+      state.structured = true;
+      hideFallbackBanner();
+      showSpinner(true);
+      try {
+        const body = Object.assign({}, state.interpretation, { page: state.page, per_page: state.perPage });
+        const r = await fetch('/api/structured-search', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+        });
+        if (!r.ok) throw new Error(`Server error (${r.status})`);
+        const data = await r.json();
+        state.total = data.total;
+        state.interpretation = data.interpretation;
+        renderResults(data.results);
+        renderCount(data.total, data.page, data.per_page);
+        renderPagination(data.total, data.page, data.per_page);
+        renderInterpretation(data.interpretation, false);
+      } catch (e) {
+        document.getElementById('results').innerHTML =
+          `<div class="bg-red-50 border border-red-200 rounded-lg p-4 text-sm text-red-700">Could not update results. Please try again.</div>`;
+      } finally {
+        showSpinner(false);
+      }
     }
 
     function updateClearBtn() {
@@ -458,20 +714,106 @@
 
     function renderResults(results) {
       const container = document.getElementById('results');
+      currentPageIds = results.map(e => String(e.serial_no));
+      const wrap = document.getElementById('select-all-wrap');
+      wrap.classList.toggle('hidden', results.length === 0);
+      wrap.classList.toggle('flex', results.length > 0);
       if (results.length === 0) {
+        const interp = state.interpretation;
+        const musts = (interp && interp.must) ? interp.must.length : 0;
+        let tip;
+        if (musts > 1) {
+          const terms = interp.must.map(c => escHtml(c.term)).join(', ');
+          tip = `Your search needs an entry to match <strong>all</strong> of: ${terms}. Try removing one of the topics above, or widen the year range.`;
+        } else {
+          tip = `Try removing a topic above, widening the year range, or rewording your search.`;
+        }
+        const exactBtn = (state.smart && state.q && state.q.trim())
+          ? `<button onclick="searchLiteral()" class="mt-4 text-sm text-brand hover:underline font-medium">Search my exact words instead</button>` : '';
         container.innerHTML = `
-          <div class="text-center py-16 text-gray-400">
-            <svg class="mx-auto mb-3 w-10 h-10" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <div class="text-center py-16 text-gray-500">
+            <svg class="mx-auto mb-3 w-10 h-10 text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5"
                 d="M9.172 16.172a4 4 0 015.656 0M9 10h.01M15 10h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
             </svg>
-            <p class="text-sm">No entries matched your search.</p>
-            <p class="text-xs mt-1">Try different keywords or broaden the year range.</p>
+            <p class="text-sm font-medium text-gray-700">No entries matched.</p>
+            <p class="text-xs mt-1.5 max-w-md mx-auto leading-relaxed">${tip}</p>
+            ${exactBtn}
           </div>`;
         return;
       }
       container.innerHTML = results.map(e => renderCard(e)).join('');
+      syncSelectAllPage();
     }
+
+    // ── Selection & export ───────────────────────────────────────────────────
+    function toggleSelect(sno, checked) {
+      if (checked) selectedIds.add(sno); else selectedIds.delete(sno);
+      syncSelectAllPage();
+      updateSelectionBar();
+    }
+
+    function toggleSelectAllPage(checked) {
+      currentPageIds.forEach(sno => { if (checked) selectedIds.add(sno); else selectedIds.delete(sno); });
+      document.querySelectorAll('#results .sel-box').forEach(cb => { cb.checked = checked; });
+      updateSelectionBar();
+    }
+
+    function syncSelectAllPage() {
+      const box = document.getElementById('select-all-page');
+      if (!box) return;
+      box.checked = currentPageIds.length > 0 && currentPageIds.every(sno => selectedIds.has(sno));
+    }
+
+    function clearSelection() {
+      selectedIds.clear();
+      document.querySelectorAll('#results .sel-box').forEach(cb => { cb.checked = false; });
+      syncSelectAllPage();
+      updateSelectionBar();
+    }
+
+    function updateSelectionBar() {
+      const n = selectedIds.size;
+      document.getElementById('selection-bar').classList.toggle('hidden', n === 0);
+      document.getElementById('selection-count').textContent =
+        `${n} ${n === 1 ? 'entry' : 'entries'} selected`;
+      document.body.style.paddingBottom = n > 0 ? '4.5rem' : '';
+      if (n === 0) hideExportMenu();
+    }
+
+    function toggleExportMenu() { document.getElementById('export-menu').classList.toggle('hidden'); }
+    function hideExportMenu() { document.getElementById('export-menu').classList.add('hidden'); }
+
+    async function doExport(format) {
+      const ids = [...selectedIds];
+      if (!ids.length) return;
+      const style = document.getElementById('export-style').value;
+      try {
+        const res = await fetch('/api/export', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ ids, format, style }),
+        });
+        if (!res.ok) throw new Error(`Server error (${res.status})`);
+        const blob = await res.blob();
+        const ext = { rtf: 'rtf', txt: 'txt', ris: 'ris', bibtex: 'bib', csv: 'csv' }[format] || 'txt';
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url; a.download = `hb-bibliography.${ext}`;
+        document.body.appendChild(a); a.click(); a.remove();
+        URL.revokeObjectURL(url);
+        hideExportMenu();
+      } catch (e) {
+        alert('Sorry — the export could not be generated. Please try again.');
+      }
+    }
+
+    // Close the export menu when clicking outside it.
+    document.addEventListener('click', (ev) => {
+      const menu = document.getElementById('export-menu');
+      if (menu && !menu.classList.contains('hidden') && !menu.parentElement.contains(ev.target)) {
+        hideExportMenu();
+      }
+    });
 
     const TYPE_COLORS = {
       'Journal Article': 'bg-blue-100 text-blue-700',
@@ -494,9 +836,13 @@
       const venueHtml = venue
         ? `<span class="text-gray-500 text-xs ml-1">· ${escHtml(venue)}</span>` : '';
 
+      const sno = String(e.serial_no);
       return `
         <article id="${id}" class="bg-white border border-gray-200 rounded-lg p-4 shadow-sm hover:shadow-md transition-shadow fade-in">
-          <div class="flex items-start justify-between gap-3">
+          <div class="flex items-start gap-3">
+            <input type="checkbox" class="sel-box mt-1 rounded border-gray-300 text-brand focus:ring-brand flex-shrink-0 cursor-pointer"
+              data-sno="${escAttr(sno)}" ${selectedIds.has(sno) ? 'checked' : ''}
+              onclick="toggleSelect('${escAttr(sno)}', this.checked)" aria-label="Select this entry" />
             <div class="flex-1 min-w-0">
               <div class="flex flex-wrap items-center gap-2 mb-1">
                 ${e.type ? `<span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${typeColor(e.type)}">${escHtml(e.type)}</span>` : ''}
@@ -582,7 +928,8 @@
 
     function goPage(p) {
       state.page = p;
-      doSearch();
+      if (state.structured) fetchStructured();
+      else doSearch();
       window.scrollTo({ top: 0, behavior: 'smooth' });
     }
 
@@ -598,6 +945,10 @@
     document.getElementById('year-from').addEventListener('change', triggerSearch);
     document.getElementById('year-to').addEventListener('change', triggerSearch);
     document.getElementById('type-filter').addEventListener('change', triggerSearch);
+    // Re-run when the smart toggle flips, but only if there's a query to interpret.
+    document.getElementById('smart-toggle').addEventListener('change', () => {
+      if (document.getElementById('search-input').value.trim()) triggerSearch();
+    });
 
     // ═══════════════════════════════════════════════════════════════════════
     // Q&A Chat
