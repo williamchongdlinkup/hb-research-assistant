@@ -815,6 +815,77 @@
       }
     });
 
+    // ── Per-record citation (the "Cite" button on each card) ─────────────────
+    const citeCache = {};   // sno -> {chicago, apa, mla, ris, bibtex}
+    const citeStyle = {};   // sno -> current style
+
+    async function openCite(sno) {
+      const panel = document.getElementById('cite-' + sno);
+      if (!panel) return;
+      if (!panel.classList.contains('hidden')) { panel.classList.add('hidden'); return; }
+      panel.classList.remove('hidden');
+      if (!citeCache[sno]) {
+        panel.innerHTML = '<p class="text-xs text-gray-400 mt-3 pt-3 border-t border-gray-100">Loading citation…</p>';
+        try {
+          const r = await fetch('/api/cite?id=' + encodeURIComponent(sno));
+          if (!r.ok) throw new Error();
+          citeCache[sno] = await r.json();
+        } catch (e) {
+          panel.innerHTML = '<p class="text-xs text-red-600 mt-3 pt-3 border-t border-gray-100">Could not load citation. Please try again.</p>';
+          return;
+        }
+      }
+      citeStyle[sno] = citeStyle[sno] || 'chicago';
+      renderCitePanel(sno);
+    }
+
+    function renderCitePanel(sno) {
+      const data = citeCache[sno];
+      const panel = document.getElementById('cite-' + sno);
+      if (!data || !panel) return;
+      const style = citeStyle[sno] || 'chicago';
+      const styleBtn = (s, label) =>
+        `<button onclick="setCiteStyle('${sno}','${s}')" class="px-2 py-0.5 rounded text-xs transition-colors ${style === s ? 'bg-brand text-white' : 'text-gray-500 hover:text-brand'}">${label}</button>`;
+      panel.innerHTML = `
+        <div class="mt-3 pt-3 border-t border-gray-100">
+          <div class="flex items-center gap-1.5 mb-2 flex-wrap">
+            <span class="text-xs text-gray-400 mr-1">Cite as</span>
+            ${styleBtn('chicago', 'Chicago')}${styleBtn('apa', 'APA')}${styleBtn('mla', 'MLA')}
+            <button id="cite-copy-${sno}" onclick="copyCite('${sno}')" class="ml-auto text-xs font-medium text-brand hover:underline">Copy</button>
+          </div>
+          <p class="text-sm text-gray-700 leading-relaxed">${escHtml(data[style] || '')}</p>
+          <div class="mt-2 flex flex-wrap gap-4 text-xs">
+            <button onclick="downloadCite('${sno}','ris')" class="text-brand hover:underline">Download .ris <span class="text-gray-400">(Zotero, EndNote)</span></button>
+            <button onclick="downloadCite('${sno}','bibtex')" class="text-brand hover:underline">Download .bib</button>
+          </div>
+        </div>`;
+    }
+
+    function setCiteStyle(sno, style) { citeStyle[sno] = style; renderCitePanel(sno); }
+
+    async function copyCite(sno) {
+      const style = citeStyle[sno] || 'chicago';
+      const text = citeCache[sno] && citeCache[sno][style];
+      if (!text) return;
+      try { await navigator.clipboard.writeText(text); } catch (e) { /* clipboard blocked */ }
+      const btn = document.getElementById('cite-copy-' + sno);
+      if (btn) { btn.textContent = 'Copied ✓'; setTimeout(() => { btn.textContent = 'Copy'; }, 1500); }
+    }
+
+    function downloadCite(sno, format) {
+      const data = citeCache[sno];
+      const content = data && data[format];
+      if (!content) return;
+      const ext = format === 'bibtex' ? 'bib' : 'ris';
+      const mime = format === 'bibtex' ? 'application/x-bibtex' : 'application/x-research-info-systems';
+      const blob = new Blob([content], { type: mime + ';charset=utf-8' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url; a.download = `hb-citation.${ext}`;
+      document.body.appendChild(a); a.click(); a.remove();
+      URL.revokeObjectURL(url);
+    }
+
     const TYPE_COLORS = {
       'Journal Article': 'bg-blue-100 text-blue-700',
       'Book': 'bg-emerald-100 text-emerald-700',
@@ -853,14 +924,20 @@
                 ${e.author_display ? escHtml(e.author_display) : '<em>No author listed</em>'}${venueHtml}
               </p>
             </div>
-            ${hasAbstract ? `
-              <button onclick="toggleCard('${id}')" aria-label="Expand entry"
-                class="flex-shrink-0 text-gray-400 hover:text-brand transition-colors mt-0.5">
-                <svg id="${id}-chevron" class="w-5 h-5 transition-transform duration-200" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" />
-                </svg>
+            <div class="flex-shrink-0 flex items-center gap-1.5 mt-0.5">
+              <button onclick="openCite('${escAttr(sno)}')" aria-label="Cite this entry" title="Get a citation for this entry"
+                class="text-xs font-medium text-gray-400 hover:text-brand transition-colors px-1.5 py-0.5 rounded border border-gray-200 hover:border-brand/40">
+                Cite
               </button>
-            ` : ''}
+              ${hasAbstract ? `
+                <button onclick="toggleCard('${id}')" aria-label="Expand entry"
+                  class="text-gray-400 hover:text-brand transition-colors">
+                  <svg id="${id}-chevron" class="w-5 h-5 transition-transform duration-200" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" />
+                  </svg>
+                </button>
+              ` : ''}
+            </div>
           </div>
           ${hasAbstract ? `
             <div id="${id}-body" class="mt-3 hidden">
@@ -878,6 +955,7 @@
             </div>
             <p id="${id}-excerpt" class="mt-2 text-sm text-gray-500 abstract-excerpt">${escHtml(e.abstract_excerpt)}</p>
           ` : ''}
+          <div id="cite-${escAttr(sno)}" class="hidden"></div>
         </article>`;
     }
 

@@ -1109,6 +1109,23 @@ def export(req: ExportRequest):
     )
 
 
+@app.get("/api/cite")
+def cite(id: str = Query(default="")):
+    """Citation strings for a single entry — powers the per-record 'Cite' button.
+    Returns formatted citations (copy-ready) plus RIS/BibTeX (download-ready)."""
+    entries = _export_entries([id])
+    if not entries:
+        return JSONResponse(status_code=404, content={"error": "Entry not found."})
+    e = entries[0]
+    return {
+        "chicago": _strip_markers(_cite_chicago(e)),
+        "apa": _strip_markers(_cite_apa(e)),
+        "mla": _strip_markers(_cite_mla(e)),
+        "ris": _export_ris([e]),
+        "bibtex": _export_bibtex([e]),
+    }
+
+
 @app.get("/", response_class=HTMLResponse)
 def index():
     html_path = Path(__file__).parent / "index.html"
