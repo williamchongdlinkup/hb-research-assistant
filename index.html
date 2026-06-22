@@ -84,7 +84,7 @@
         <img src="/static/nti_logo.png" alt="Nan Tien Institute" class="h-14 w-auto mx-auto mb-7" />
         <h2 class="text-3xl sm:text-4xl font-bold tracking-tight text-gray-900">HB Research Assistant</h2>
         <p class="mt-4 text-base sm:text-lg text-gray-600 leading-relaxed">
-          A research tool for the study of Humanistic Buddhism. Search six years of curated
+          A research tool for the study of Humanistic Buddhism. Search decades of curated
           scholarship, ask grounded questions answered only from the corpus with verifiable
           citations, and audit any bibliography against the collection — all from one place.
         </p>
@@ -1168,7 +1168,9 @@
             <p>${answerHtml}</p>
           </div>
           <p class="text-xs text-gray-400 mt-3 pt-3 border-t border-gray-100">
-            Based on ${data.sources_count} entries from the HB corpus
+            ${data.sources_count > 0
+              ? `Searched ${data.sources_count} corpus entries · cited ${refCount}`
+              : 'No matching entries found in the HB corpus'}
           </p>
           ${refCount > 0 ? `
             <div class="mt-1">

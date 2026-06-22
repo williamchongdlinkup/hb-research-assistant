@@ -21,14 +21,25 @@ load_dotenv()
 
 logger = logging.getLogger("hb_research_assistant")
 
-CSV_PATH = Path(__file__).parent / "data" / "HBBiblio_Dec2025_Complete.csv"
+CSV_PATH = Path(__file__).parent / "data" / "HBBiblio_Jun2026_Master.csv"
 STATIC_DIR = Path(__file__).parent / "static"
 ABSTRACT_EXCERPT_LEN = 250
 # Human-readable snapshot date for the current corpus. Surfaced via /api/stats
 # so the landing page reads it live — editable in one place when the corpus is
 # swapped (no template change needed).
-CORPUS_LAST_UPDATED = "December 2025"
+CORPUS_LAST_UPDATED = "June 2026"
 GEMINI_MODEL = "gemini-3.1-flash-lite"
+
+# Grounded Q&A / input guards. The browser enforces a 5-turn cap for UX; these are
+# the authoritative server-side limits that bound prompt size and per-session cost.
+_MAX_TURNS = 5              # max user turns per conversation (matches the UI)
+_MAX_CHAT_MESSAGE = 4000    # max chars in a single question
+_MAX_CHAT_HISTORY = 12      # max prior messages kept (≈ 5 turns × 2, with margin)
+_MAX_AUDIT_BIB = 60000      # max chars of pasted bibliography accepted by /api/audit
+# Low temperature for grounded/structured calls: faithful synthesis and stable
+# JSON, less paraphrase drift. (The audit/parse calls already pin their own.)
+_CHAT_TEMPERATURE = 0.2
+_SMART_SEARCH_TEMPERATURE = 0.0
 
 
 def _load_api_keys() -> list[str]:
@@ -121,7 +132,10 @@ def _chat_with_rotation(system_prompt: str, history: list, message: str):
         try:
             session = client.chats.create(
                 model=GEMINI_MODEL,
-                config=genai_types.GenerateContentConfig(system_instruction=system_prompt),
+                config=genai_types.GenerateContentConfig(
+                    system_instruction=system_prompt,
+                    temperature=_CHAT_TEMPERATURE,
+                ),
                 history=history,
             )
             return session.send_message(message)
@@ -234,6 +248,7 @@ def _build_db() -> sqlite3.Connection:
             title,
             abstract,
             authors,
+            venue,
             tokenize='unicode61'
         )
     """)
@@ -303,7 +318,7 @@ def _build_db() -> sqlite3.Connection:
     """, rows)
 
     conn.execute("""
-        INSERT INTO entries_fts (rowid, title, abstract, authors)
+        INSERT INTO entries_fts (rowid, title, abstract, authors, venue)
         SELECT rowid, title, abstract,
             trim(
                 coalesce(author1_last,'')  || ' ' || coalesce(author1_first,'') || ' ' ||
@@ -313,6 +328,14 @@ def _build_db() -> sqlite3.Connection:
                 coalesce(editor1_last,'')  || ' ' || coalesce(editor1_first,'') || ' ' ||
                 coalesce(editor2_last,'')  || ' ' || coalesce(editor2_first,'') || ' ' ||
                 coalesce(editor3_last,'')  || ' ' || coalesce(editor3_first,'')
+            ),
+            -- Venue text (journal / book / publisher) so a search for a journal or
+            -- press name actually matches; previously only title+abstract+authors
+            -- were indexed, so venue-only queries returned nothing.
+            trim(
+                coalesce(journal,'')    || ' ' ||
+                coalesce(book_title,'') || ' ' ||
+                coalesce(publisher,'')
             )
         FROM entries
     """)
@@ -342,10 +365,29 @@ def _entry_to_dict(row: sqlite3.Row) -> dict:
     return d
 
 
+def _validate_model_on_startup() -> None:
+    """Ping the configured Gemini model once at boot so a wrong/unavailable model
+    ID or a bad key shows up in the deploy logs immediately — not as a generic 502
+    on the first user request. Never raises: search must still work if AI is down."""
+    if not _clients:
+        logger.warning("No Gemini API keys configured; AI features (chat, smart search, audit) are disabled.")
+        return
+    try:
+        _generate_with_rotation(
+            model=GEMINI_MODEL,
+            contents="ping",
+            config=genai_types.GenerateContentConfig(max_output_tokens=1, temperature=0.0),
+        )
+        logger.info("Gemini model '%s' reachable.", GEMINI_MODEL)
+    except Exception as exc:  # noqa: BLE001 — diagnostic only, must not block startup
+        logger.error("Gemini model '%s' check FAILED at startup: %s", GEMINI_MODEL, exc)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     global _db
     _db = _build_db()
+    _validate_model_on_startup()
     yield
 
 
@@ -378,6 +420,25 @@ def stats():
         # Lets the deployment confirm multi-key rotation took effect without
         # reading Railway logs.
         "ai_keys": len(_clients),
+    }
+
+
+@app.get("/api/health")
+def health():
+    """Liveness/readiness probe: corpus loaded and AI configuration, at a glance.
+    Reports config only (no Gemini call) so it stays cheap to poll; the actual
+    model reachability check runs once at startup (see _validate_model_on_startup)."""
+    try:
+        n = _db.execute("SELECT COUNT(*) as c FROM entries").fetchone()["c"]
+    except Exception:  # noqa: BLE001 — health must never raise
+        n = 0
+    return {
+        "status": "ok" if n > 0 else "degraded",
+        "db_entries": n,
+        "ai_configured": bool(_clients),
+        "ai_keys": len(_clients),
+        "model": GEMINI_MODEL,
+        "corpus_last_updated": CORPUS_LAST_UPDATED,
     }
 
 
@@ -439,8 +500,10 @@ def _like_search(q: str, year_from, year_to, type_, page, per_page) -> dict:
     """Last-resort LIKE search used when an FTS MATCH string fails to parse."""
     conditions, params = _filter_conditions(year_from, year_to, type_)
     like_q = f"%{q}%"
-    conditions.append("(e.title LIKE ? OR e.abstract LIKE ?)")
-    params += [like_q, like_q]
+    conditions.append(
+        "(e.title LIKE ? OR e.abstract LIKE ? OR e.journal LIKE ? OR e.book_title LIKE ? OR e.publisher LIKE ?)"
+    )
+    params += [like_q] * 5
     where = "WHERE " + " AND ".join(conditions)
     offset = (page - 1) * per_page
     total = _db.execute(f"SELECT COUNT(*) as cnt FROM entries e {where}", params).fetchone()["cnt"]
@@ -619,7 +682,14 @@ def _structure_query(nl: str, allowed_types: list[str]) -> Optional[dict]:
         query=nl.strip(),
     )
     try:
-        resp = _generate_with_rotation(model=GEMINI_MODEL, contents=prompt)
+        resp = _generate_with_rotation(
+            model=GEMINI_MODEL,
+            contents=prompt,
+            config=genai_types.GenerateContentConfig(
+                temperature=_SMART_SEARCH_TEMPERATURE,
+                response_mime_type="application/json",
+            ),
+        )
         spec = _parse_json(resp.text)
     except Exception:  # noqa: BLE001 — any failure -> fall back to plain search
         logger.exception("smart-search structuring failed")
@@ -1221,6 +1291,13 @@ HB corpus entries retrieved for this query ({n} entries):
 {context}\
 """
 
+# Exact fallback wording the model is told to use (system-prompt rule 4) when the
+# corpus can't answer. Reused server-side to skip the LLM entirely when retrieval
+# returns nothing to ground on — with no context there is no trustworthy answer.
+_INSUFFICIENT_INFO = (
+    "The HB corpus does not appear to contain sufficient information to answer this question."
+)
+
 
 _STOPWORDS = {
     'a','an','the','and','or','but','in','on','at','to','for','of','with','by',
@@ -1230,32 +1307,6 @@ _STOPWORDS = {
     'its','this','that','these','those','i','you','we','they','it','according',
     'can','please','give','get','find','show','list','explain','describe',
 }
-
-
-def _retrieve_for_query(query: str, limit: int = 50) -> list[dict]:
-    words = re.findall(r'\b[a-zA-Z]{3,}\b', query)
-    terms = [w for w in words if w.lower() not in _STOPWORDS]
-    if not terms:
-        return []
-    # OR across all terms — BM25 ranking handles relevance ordering
-    fts_query = ' OR '.join(f'"{t}"' for t in terms)
-    try:
-        rows = _db.execute(
-            """
-            SELECT e.* FROM entries_fts f
-            JOIN entries e ON e.rowid = f.rowid
-            WHERE entries_fts MATCH ? ORDER BY rank LIMIT ?
-            """,
-            [fts_query, limit],
-        ).fetchall()
-    except sqlite3.OperationalError:
-        like_params = [p for t in terms for p in (f'%{t}%', f'%{t}%')]
-        conditions = ' OR '.join('(e.title LIKE ? OR e.abstract LIKE ?)' for _ in terms)
-        rows = _db.execute(
-            f"SELECT e.* FROM entries e WHERE {conditions} LIMIT ?",
-            like_params + [limit],
-        ).fetchall()
-    return [_entry_to_dict(r) for r in rows]
 
 
 def _build_system_prompt(entries: list[dict]) -> str:
@@ -1281,17 +1332,38 @@ def chat(req: ChatRequest):
     if not _clients:
         return JSONResponse(status_code=503, content={"error": "AI service not configured."})
 
-    entries = _retrieve_for_query(req.message)
-    sources_count = len(entries)
+    # Input guards: keep prompt size and per-session cost bounded regardless of
+    # what the client sends (the browser's 5-turn cap is convenience, not security).
+    message = (req.message or "").strip()
+    if not message:
+        return JSONResponse(status_code=400, content={"error": "Please enter a question."})
+    if len(message) > _MAX_CHAT_MESSAGE:
+        return JSONResponse(status_code=400, content={"error": "Question is too long; please shorten it."})
+    user_turns = sum(1 for m in req.history if m.role == "user")
+    if user_turns >= _MAX_TURNS:
+        return JSONResponse(
+            status_code=429,
+            content={"error": "Conversation turn limit reached. Please start a new conversation."},
+        )
+    history = req.history[-_MAX_CHAT_HISTORY:]
+
+    # Retrieve grounding via the shared Unicode-aware extractor (_fts_rows) so
+    # Chinese / Pali / diacritic terms are searched, not silently dropped.
+    entries = [_entry_to_dict(r) for r in _fts_rows(message, 50)]
+
+    # No grounding retrieved → don't call the LLM at all. With an empty corpus it
+    # could only answer from outside knowledge, which this tool must never do.
+    if not entries:
+        return {"answer": _INSUFFICIENT_INFO, "citations": [], "sources_count": 0, "cited_count": 0}
 
     system_prompt = _build_system_prompt(entries)
 
     gemini_history = [
         genai_types.Content(role=m.role, parts=[genai_types.Part(text=m.content)])
-        for m in req.history
+        for m in history
     ]
     try:
-        response = _chat_with_rotation(system_prompt, gemini_history, req.message)
+        response = _chat_with_rotation(system_prompt, gemini_history, message)
         answer = response.text
     except Exception:
         logger.exception("Gemini chat generation failed")
@@ -1304,7 +1376,14 @@ def chat(req: ChatRequest):
         if 1 <= n <= len(entries)
     ]
 
-    return {"answer": answer, "citations": citations, "sources_count": sources_count}
+    # sources_count = entries retrieved (the grounding pool); cited_count = entries
+    # the answer actually cited. The UI shows both so it never overstates grounding.
+    return {
+        "answer": answer,
+        "citations": citations,
+        "sources_count": len(entries),
+        "cited_count": len(citations),
+    }
 
 
 # ── Reference Audit ──────────────────────────────────────────────────────────
@@ -1428,8 +1507,11 @@ def _fts_rows(text: str, limit: int):
             [fts_query, limit],
         ).fetchall()
     except sqlite3.OperationalError:
-        like_params = [p for t in terms for p in (f"%{t}%", f"%{t}%")]
-        conditions = " OR ".join("(e.title LIKE ? OR e.abstract LIKE ?)" for _ in terms)
+        like_params = [p for t in terms for p in (f"%{t}%",) * 5]
+        conditions = " OR ".join(
+            "(e.title LIKE ? OR e.abstract LIKE ? OR e.journal LIKE ? OR e.book_title LIKE ? OR e.publisher LIKE ?)"
+            for _ in terms
+        )
         return _db.execute(
             f"SELECT e.* FROM entries e WHERE {conditions} LIMIT ?",
             like_params + [limit],
@@ -1582,6 +1664,11 @@ def audit(req: AuditRequest):
     bib = (req.bibliography or "").strip()
     if not bib:
         return {"verified": [], "not_in_corpus": [], "missing": [], "suggested": [], "pool_size": 0}
+    if len(bib) > _MAX_AUDIT_BIB:
+        return JSONResponse(
+            status_code=400,
+            content={"error": "Bibliography is too long; please audit it in smaller batches."},
+        )
 
     # Parse first so retrieval and classification work on clean citations even
     # when the paste has UI noise or no line breaks.
