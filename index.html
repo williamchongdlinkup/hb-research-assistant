@@ -18,6 +18,8 @@
     .prose-answer p { margin-bottom: 0.75em; }
     .prose-answer p:last-child { margin-bottom: 0; }
     .scroll-mt-ref { scroll-margin-top: 8px; }
+    .ref-flash { animation: refFlash 1.6s ease-out; border-radius: 6px; }
+    @keyframes refFlash { 0%, 30% { background-color: rgba(176, 17, 22, 0.12); } 100% { background-color: transparent; } }
     /* Warm paper background for an academic, print-like feel */
     body { background-color: #faf8f5; }
   </style>
@@ -62,7 +64,7 @@
       </button>
       <button id="tab-btn-qa" onclick="switchTab('qa')"
         class="px-5 py-3 text-sm font-medium border-b-2 border-transparent text-gray-500 hover:text-gray-700 -mb-px transition-colors">
-        Q&amp;A Chat
+        Ask the Literature
       </button>
       <button id="tab-btn-audit" onclick="switchTab('audit')"
         class="px-5 py-3 text-sm font-medium border-b-2 border-transparent text-gray-500 hover:text-gray-700 -mb-px transition-colors">
@@ -112,8 +114,8 @@
               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.86 9.86 0 01-4-.8L3 20l1.3-3.9A7.96 7.96 0 013 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
             </svg>
           </div>
-          <h3 class="text-base font-semibold text-gray-900 group-hover:text-brand transition-colors">Q&amp;A Chat</h3>
-          <p class="mt-1.5 text-sm text-gray-500 leading-relaxed">Ask research questions and get prose answers grounded in the corpus, with inline citations.</p>
+          <h3 class="text-base font-semibold text-gray-900 group-hover:text-brand transition-colors">Ask the Literature</h3>
+          <p class="mt-1.5 text-sm text-gray-500 leading-relaxed">Grounded, cited answers drawn only from the HB corpus — a fast first pass for your literature review.</p>
           <span class="inline-flex items-center gap-1 mt-3 text-sm font-medium text-brand">Start asking
             <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
           </span>
@@ -263,7 +265,7 @@
   </div><!-- /tab-search -->
 
   <!-- ═══════════════════════════════════════════════════════════════════════ -->
-  <!-- Q&A Chat tab                                                           -->
+  <!-- Ask the Literature tab                                                  -->
   <!-- ═══════════════════════════════════════════════════════════════════════ -->
   <div id="tab-qa" class="hidden">
     <div class="max-w-3xl mx-auto px-4 py-6 space-y-4">
@@ -816,11 +818,13 @@
     });
 
     // ── Per-record citation (the "Cite" button on each card) ─────────────────
-    const citeCache = {};   // sno -> {chicago, apa, mla, ris, bibtex}
-    const citeStyle = {};   // sno -> current style
+    const citeCache = {};   // sno -> {chicago, apa, mla, ris, bibtex} (data, shared across panels)
+    const citeStyle = {};   // panel key -> current style (a publication may have panels in several places)
 
-    async function openCite(sno) {
-      const panel = document.getElementById('cite-' + sno);
+    // k = unique DOM panel key; sno = serial_no used for fetch + data cache.
+    // For search cards k === sno; for chat references k is `${msgId}-${n}` to avoid id collisions.
+    async function openCite(k, sno) {
+      const panel = document.getElementById('cite-' + k);
       if (!panel) return;
       if (!panel.classList.contains('hidden')) { panel.classList.add('hidden'); return; }
       panel.classList.remove('hidden');
@@ -835,23 +839,23 @@
           return;
         }
       }
-      citeStyle[sno] = citeStyle[sno] || 'chicago';
-      renderCitePanel(sno);
+      citeStyle[k] = citeStyle[k] || 'chicago';
+      renderCitePanel(k, sno);
     }
 
-    function renderCitePanel(sno) {
+    function renderCitePanel(k, sno) {
       const data = citeCache[sno];
-      const panel = document.getElementById('cite-' + sno);
+      const panel = document.getElementById('cite-' + k);
       if (!data || !panel) return;
-      const style = citeStyle[sno] || 'chicago';
+      const style = citeStyle[k] || 'chicago';
       const styleBtn = (s, label) =>
-        `<button onclick="setCiteStyle('${sno}','${s}')" class="px-2 py-0.5 rounded text-xs transition-colors ${style === s ? 'bg-brand text-white' : 'text-gray-500 hover:text-brand'}">${label}</button>`;
+        `<button onclick="setCiteStyle('${k}','${sno}','${s}')" class="px-2 py-0.5 rounded text-xs transition-colors ${style === s ? 'bg-brand text-white' : 'text-gray-500 hover:text-brand'}">${label}</button>`;
       panel.innerHTML = `
         <div class="mt-3 pt-3 border-t border-gray-100">
           <div class="flex items-center gap-1.5 mb-2 flex-wrap">
             <span class="text-xs text-gray-400 mr-1">Cite as</span>
             ${styleBtn('chicago', 'Chicago')}${styleBtn('apa', 'APA')}${styleBtn('mla', 'MLA')}
-            <button id="cite-copy-${sno}" onclick="copyCite('${sno}')" class="ml-auto text-xs font-medium text-brand hover:underline">Copy</button>
+            <button id="cite-copy-${k}" onclick="copyCite('${k}','${sno}')" class="ml-auto text-xs font-medium text-brand hover:underline">Copy</button>
           </div>
           <p class="text-sm text-gray-700 leading-relaxed">${escHtml(data[style] || '')}</p>
           <div class="mt-2 flex flex-wrap gap-4 text-xs">
@@ -861,14 +865,14 @@
         </div>`;
     }
 
-    function setCiteStyle(sno, style) { citeStyle[sno] = style; renderCitePanel(sno); }
+    function setCiteStyle(k, sno, style) { citeStyle[k] = style; renderCitePanel(k, sno); }
 
-    async function copyCite(sno) {
-      const style = citeStyle[sno] || 'chicago';
+    async function copyCite(k, sno) {
+      const style = citeStyle[k] || 'chicago';
       const text = citeCache[sno] && citeCache[sno][style];
       if (!text) return;
       try { await navigator.clipboard.writeText(text); } catch (e) { /* clipboard blocked */ }
-      const btn = document.getElementById('cite-copy-' + sno);
+      const btn = document.getElementById('cite-copy-' + k);
       if (btn) { btn.textContent = 'Copied ✓'; setTimeout(() => { btn.textContent = 'Copy'; }, 1500); }
     }
 
@@ -925,7 +929,7 @@
               </p>
             </div>
             <div class="flex-shrink-0 flex items-center gap-1.5 mt-0.5">
-              <button onclick="openCite('${escAttr(sno)}')" aria-label="Cite this entry" title="Get a citation for this entry"
+              <button onclick="openCite('${escAttr(sno)}','${escAttr(sno)}')" aria-label="Cite this entry" title="Get a citation for this entry"
                 class="text-xs font-medium text-gray-400 hover:text-brand transition-colors px-1.5 py-0.5 rounded border border-gray-200 hover:border-brand/40">
                 Cite
               </button>
@@ -1029,12 +1033,13 @@
     });
 
     // ═══════════════════════════════════════════════════════════════════════
-    // Q&A Chat
+    // Ask the Literature
     // ═══════════════════════════════════════════════════════════════════════
     let chatHistory = [];
     let turnCount = 0;
     let msgIdCounter = 0;
     const MAX_TURNS = 5;
+    const chatExports = {};   // msgId -> { question, answer, citations } for per-answer export
 
     async function sendChat() {
       const input = document.getElementById('chat-input');
@@ -1072,7 +1077,7 @@
         chatHistory.push({ role: 'user', content: message });
         chatHistory.push({ role: 'model', content: data.answer });
         turnCount++;
-        appendAIMessage(data, msgId);
+        appendAIMessage(data, msgId, message);
         updateTurnUI();
 
       } catch (e) {
@@ -1114,20 +1119,26 @@
     }
 
     function parseCitationsToHtml(text, msgId) {
-      // Escape HTML first, then replace [N] with superscript links
+      // Escape HTML first, then convert the model's Markdown emphasis (bold before
+      // italic so ** isn't eaten by the single-* rule), then replace [N] with links.
       return escHtml(text)
+        .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
+        .replace(/\*([^*]+)\*/g, '<em>$1</em>')
         .replace(/\[(\d+)\]/g, (_, n) =>
-          `<sup><a href="#chat-ref-${msgId}-${n}" class="text-brand-light hover:text-brand font-semibold">[${n}]</a></sup>`
+          `<sup><a href="#chat-ref-${msgId}-${n}" onclick="jumpToRef(event, ${msgId}, ${n})" class="text-brand-light hover:text-brand font-semibold">[${n}]</a></sup>`
         )
         // Wrap double-newlines as paragraph breaks
         .replace(/\n\n+/g, '</p><p class="mt-3">')
         .replace(/\n/g, '<br>');
     }
 
-    function appendAIMessage(data, msgId) {
+    function appendAIMessage(data, msgId, question) {
       const thread = document.getElementById('chat-thread');
       const div = document.createElement('div');
       div.className = 'fade-in';
+
+      // Stash everything an export needs — sessions are stateless, so this is the only take-away.
+      chatExports[msgId] = { question: question || '', answer: data.answer || '', citations: data.citations || [] };
 
       const answerHtml = parseCitationsToHtml(data.answer, msgId);
       const refCount = data.citations.length;
@@ -1156,6 +1167,17 @@
               </div>
             </div>
           ` : ''}
+          <div class="mt-2 pt-2 border-t border-gray-100 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs">
+            <span class="text-gray-400">Export</span>
+            <button onclick="copyAnswerMd(${msgId}, this)" class="text-brand hover:underline font-medium">Copy answer + sources</button>
+            <button onclick="downloadAnswerRtf(${msgId}, this)" class="text-brand hover:underline">Download .rtf <span class="text-gray-400">(Word)</span></button>
+            ${refCount > 0 ? `
+              <span class="text-gray-300">·</span>
+              <span class="text-gray-400">Sources for Zotero/EndNote</span>
+              <button onclick="downloadAnswerSources(${msgId},'ris')" class="text-brand hover:underline">.ris</button>
+              <button onclick="downloadAnswerSources(${msgId},'bibtex')" class="text-brand hover:underline">.bib</button>
+            ` : ''}
+          </div>
         </div>`;
 
       thread.appendChild(div);
@@ -1172,6 +1194,8 @@
       const venue = e.journal || e.book_title || e.publisher || '';
       const hasAbstract = e.abstract && e.abstract.trim();
       const safeUrl = (e.url && /^https?:\/\//i.test(e.url.trim())) ? e.url.trim() : null;
+      const sno = (e.serial_no !== undefined && e.serial_no !== null && String(e.serial_no).trim()) ? String(e.serial_no) : null;
+      const citeKey = `${msgId}-${n}`;
 
       return `
         <div id="${refId}" class="flex gap-2.5 text-xs scroll-mt-ref pl-2">
@@ -1182,6 +1206,10 @@
               ${escHtml(author)} · ${year}${venue ? ' · <em>' + escHtml(venue) + '</em>' : ''}
             </p>
             <div class="flex gap-3 mt-1">
+              ${sno ? `
+                <button onclick="openCite('${escAttr(citeKey)}','${escAttr(sno)}')"
+                  class="text-brand hover:underline text-xs">Cite</button>
+              ` : ''}
               ${hasAbstract ? `
                 <button onclick="toggleRefDetail('${refId}-detail')"
                   class="text-brand hover:underline text-xs">Show abstract</button>
@@ -1196,8 +1224,93 @@
                 ${escHtml(e.abstract)}
               </div>
             ` : ''}
+            ${sno ? `<div id="cite-${escAttr(citeKey)}" class="hidden"></div>` : ''}
           </div>
         </div>`;
+    }
+
+    // ── Per-answer export (Markdown working copy + source list for reference managers) ──
+    function buildAnswerMarkdown(msgId) {
+      const m = chatExports[msgId];
+      if (!m) return '';
+      const lines = [`## ${m.question || 'Research question'}`, '', (m.answer || '').trim()];
+      if (m.citations && m.citations.length) {
+        lines.push('', '### References', '');
+        m.citations.forEach(c => {
+          const e = c.entry || {};
+          const author = e.author_display || 'Unknown Author';
+          const year = e.year || 'n.d.';
+          const title = e.title || 'Untitled';
+          const venue = e.journal || e.book_title || e.publisher || '';
+          let ref = `${c.number}. ${author} (${year}). ${title}.`;
+          if (venue) ref += ` *${venue}*.`;
+          if (e.url && /^https?:\/\//i.test(String(e.url).trim())) ref += ` ${String(e.url).trim()}`;
+          lines.push(ref);
+        });
+      }
+      lines.push('', '---',
+        '*AI-generated synthesis grounded in the HB Research Bibliography — a working first pass, not a final output. Verify every source before citing.*');
+      return lines.join('\n');
+    }
+
+    async function copyAnswerMd(msgId, btn) {
+      const md = buildAnswerMarkdown(msgId);
+      if (!md) return;
+      try { await navigator.clipboard.writeText(md); } catch (e) { /* clipboard blocked */ }
+      if (btn) { const t = btn.textContent; btn.textContent = 'Copied ✓'; setTimeout(() => { btn.textContent = t; }, 1500); }
+    }
+
+    async function downloadAnswerRtf(msgId, btn) {
+      const m = chatExports[msgId];
+      if (!m || !(m.answer || '').trim()) return;
+      const refs = (m.citations || [])
+        .filter(c => c.entry && c.entry.serial_no !== undefined && c.entry.serial_no !== null && String(c.entry.serial_no).trim())
+        .map(c => ({ n: c.number, id: String(c.entry.serial_no) }));
+      const orig = btn && btn.innerHTML;
+      if (btn) btn.textContent = 'Preparing…';
+      try {
+        const res = await fetch('/api/chat-export', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ question: m.question || '', answer: m.answer, style: 'chicago', refs }),
+        });
+        if (!res.ok) throw new Error(`Server error (${res.status})`);
+        const blob = await res.blob();
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url; a.download = 'hb-answer.rtf';
+        document.body.appendChild(a); a.click(); a.remove();
+        URL.revokeObjectURL(url);
+      } catch (e) {
+        alert('Sorry — the document could not be generated. Please try again.');
+      } finally {
+        if (btn && orig) btn.innerHTML = orig;
+      }
+    }
+
+    async function downloadAnswerSources(msgId, format) {
+      const m = chatExports[msgId];
+      if (!m || !m.citations) return;
+      const ids = m.citations
+        .map(c => c.entry && c.entry.serial_no)
+        .filter(v => v !== undefined && v !== null && String(v).trim())
+        .map(String);
+      if (!ids.length) return;
+      try {
+        const res = await fetch('/api/export', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ ids, format }),
+        });
+        if (!res.ok) throw new Error(`Server error (${res.status})`);
+        const blob = await res.blob();
+        const ext = format === 'bibtex' ? 'bib' : 'ris';
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url; a.download = `hb-sources.${ext}`;
+        document.body.appendChild(a); a.click(); a.remove();
+        URL.revokeObjectURL(url);
+      } catch (e) {
+        alert('Sorry — the source list could not be generated. Please try again.');
+      }
     }
 
     function appendErrorMessage(text) {
@@ -1210,6 +1323,19 @@
         </div>`;
       thread.appendChild(div);
       div.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    }
+
+    function jumpToRef(ev, msgId, n) {
+      if (ev) ev.preventDefault();
+      // Expand the references panel if it's collapsed — can't scroll into a hidden element
+      const panel = document.getElementById(`refs-${msgId}`);
+      if (panel && panel.classList.contains('hidden')) toggleRefs(`refs-${msgId}`);
+      const target = document.getElementById(`chat-ref-${msgId}-${n}`);
+      if (!target) return;
+      target.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      target.classList.remove('ref-flash');
+      void target.offsetWidth; // restart the animation if clicked repeatedly
+      target.classList.add('ref-flash');
     }
 
     function toggleRefs(id) {
@@ -1246,6 +1372,7 @@
       chatHistory = [];
       turnCount = 0;
       msgIdCounter = 0;
+      for (const k in chatExports) delete chatExports[k];
       document.getElementById('chat-thread').innerHTML = '';
       document.getElementById('chat-input-area').classList.remove('hidden');
       document.getElementById('chat-limit-msg').classList.add('hidden');

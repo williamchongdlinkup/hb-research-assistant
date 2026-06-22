@@ -175,6 +175,18 @@ class ExportRequest(BaseModel):
     style: str = "chicago"              # chicago | apa | mla  (for rtf/txt)
 
 
+class ChatExportRef(BaseModel):
+    n: int                              # citation number as it appears in the answer ([n])
+    id: str                             # serial_no of the cited entry
+
+
+class ChatExportRequest(BaseModel):
+    question: str = ""
+    answer: str = ""
+    style: str = "chicago"              # reference style for the bibliography section
+    refs: list[ChatExportRef] = []      # cited entries, in answer order
+
+
 def _build_db() -> sqlite3.Connection:
     conn = sqlite3.connect(":memory:", check_same_thread=False)
     conn.row_factory = sqlite3.Row
@@ -1080,6 +1092,43 @@ def _export_rtf(entries: list[dict], style: str) -> str:
     return head + title + body + "}"
 
 
+def _export_chat_rtf(question: str, answer: str,
+                     numbered: list[tuple[int, Optional[dict]]], style: str) -> str:
+    """Render a Q&A answer as an RTF working document, openable in Word: bold
+    question, answer prose with superscript [n] citation markers, then a numbered
+    reference list in the chosen style. Not a final output — a working first pass."""
+    cite = _CITERS.get(style, _cite_chicago)
+    parts = [r"{\rtf1\ansi\deff0{\fonttbl{\f0 Times New Roman;}}\fs24 "]
+    q = question.strip()
+    if q:
+        parts.append("{\\b\\fs28 " + _rtf_escape(q) + "}\\par\\pard\\par ")
+
+    # The answer is plain text from the model with [n] markers and blank-line
+    # paragraph breaks. Escape first (handles CJK), then layer RTF control words on
+    # top — escaping leaves ASCII digits, brackets and newlines untouched.
+    body = _rtf_escape(answer.strip())
+    # The model writes Markdown emphasis (e.g. *rensheng fojiao* for romanised terms,
+    # **bold** for stress). Escaping leaves the * markers intact, so convert them to
+    # RTF formatting here — bold first so ** isn't consumed by the single-* rule.
+    body = re.sub(r"\*\*(.+?)\*\*", r"{\\b \1}", body)
+    body = re.sub(r"\*(.+?)\*", r"{\\i \1}", body)
+    body = re.sub(r"\[(\d+)\]", r"{\\super [\1]}", body)
+    body = re.sub(r"\n\n+", r"\\par\\pard\\par ", body)
+    body = body.replace("\n", r"\line ")
+    parts.append(body + "\\par\\pard\\par ")
+
+    if numbered:
+        parts.append("{\\b References}\\par\\pard\\par ")
+        for n, e in numbered:
+            line = f"[{n}] " + (cite(e) if e else "(entry unavailable)")
+            parts.append("\\li360\\fi-360 " + _rtf_escape(line) + "\\par\\pard ")
+
+    disclaimer = ("AI-generated synthesis grounded in the HB Research Bibliography. "
+                  "A working first pass, not a final output; verify every source before citing.")
+    parts.append("\\par {\\i\\fs20 " + _rtf_escape(disclaimer) + "}}")
+    return "".join(parts)
+
+
 @app.post("/api/export")
 def export(req: ExportRequest):
     entries = _export_entries(req.ids)
@@ -1106,6 +1155,25 @@ def export(req: ExportRequest):
         content=data,
         media_type=f"{media}; charset=utf-8",
         headers={"Content-Disposition": f'attachment; filename="hb-bibliography.{ext}"'},
+    )
+
+
+@app.post("/api/chat-export")
+def chat_export(req: ChatExportRequest):
+    """Export a single Q&A answer as an RTF working document (question + cited
+    prose + numbered references). Powers the 'Download .rtf' button in the chat."""
+    answer = (req.answer or "").strip()
+    if not answer:
+        return JSONResponse(status_code=400, content={"error": "Nothing to export."})
+    ids = [r.id for r in req.refs]
+    by_id = {str(e.get("serial_no")): e for e in _export_entries(ids)} if ids else {}
+    numbered = [(r.n, by_id.get(str(r.id))) for r in req.refs]
+    content = _export_chat_rtf(req.question or "", answer, numbered, (req.style or "chicago").lower())
+    data = content.encode("ascii", errors="replace")
+    return Response(
+        content=data,
+        media_type="application/rtf; charset=utf-8",
+        headers={"Content-Disposition": 'attachment; filename="hb-answer.rtf"'},
     )
 
 
