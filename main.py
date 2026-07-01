@@ -1264,10 +1264,31 @@ def cite(id: str = Query(default="")):
     }
 
 
+def _ga_snippet() -> str:
+    """Return the GA4 gtag.js snippet if GA_MEASUREMENT_ID is configured, else ''."""
+    ga_id = os.getenv("GA_MEASUREMENT_ID", "").strip()
+    if not ga_id:
+        return ""
+    return (
+        f'<!-- Google tag (gtag.js) -->\n'
+        f'<script async src="https://www.googletagmanager.com/gtag/js?id={ga_id}"></script>\n'
+        f'<script>\n'
+        f'  window.dataLayer = window.dataLayer || [];\n'
+        f'  function gtag(){{dataLayer.push(arguments);}}\n'
+        f"  gtag('js', new Date());\n"
+        f"  gtag('config', '{ga_id}');\n"
+        f'</script>\n'
+    )
+
+
 @app.get("/", response_class=HTMLResponse)
 def index():
     html_path = Path(__file__).parent / "index.html"
-    return HTMLResponse(content=html_path.read_text(encoding="utf-8"))
+    html = html_path.read_text(encoding="utf-8")
+    snippet = _ga_snippet()
+    if snippet:
+        html = html.replace("</head>", snippet + "</head>", 1)
+    return HTMLResponse(content=html)
 
 
 # ── Grounded Q&A ─────────────────────────────────────────────────────────────
