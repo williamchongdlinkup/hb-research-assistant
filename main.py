@@ -858,6 +858,16 @@ def _export_entries(ids: list[str]) -> list[dict]:
     return [by_id[i] for i in ids if i in by_id]
 
 
+def _all_entries() -> list[dict]:
+    """Every corpus entry as a raw dict, newest first — the source list for the
+    uncapped full-corpus export. Non-null years lead (descending), undated works
+    trail, then title as a stable tiebreaker."""
+    rows = _db.execute(
+        "SELECT * FROM entries ORDER BY year IS NULL, year DESC, title"
+    ).fetchall()
+    return [dict(r) for r in rows]
+
+
 def _people(e: dict, kind: str) -> list[tuple[str, str]]:
     """Extract (last, first) name pairs for authors (1–4) or editors (1–3)."""
     n = 4 if kind == "author" else 3
@@ -1112,17 +1122,56 @@ def _export_csv(entries: list[dict]) -> str:
     import io
     buf = io.StringIO()
     w = csv.writer(buf)
-    w.writerow(["serial_no", "type", "authors", "editors", "year", "title", "journal",
-                "book_title", "volume", "issue", "pages", "publisher", "city", "url"])
+    w.writerow([h for h, _ in _FULL_EXPORT_COLS])
     for e in entries:
-        w.writerow([
-            e.get("serial_no", ""), e.get("type", ""),
-            "; ".join(_inv(l, f) for l, f in _people(e, "author")),
-            "; ".join(_inv(l, f) for l, f in _people(e, "editor")),
-            e.get("year") or "", e.get("title", ""), e.get("journal", ""),
-            e.get("book_title", ""), e.get("volume", ""), e.get("issue", ""),
-            _pages(e), e.get("publisher", ""), e.get("city", ""), e.get("url", ""),
-        ])
+        w.writerow([fn(e) for _, fn in _FULL_EXPORT_COLS])
+    return buf.getvalue()
+
+
+# Columns shared by the CSV and XLSX full-corpus exports, so the two stay in
+# lockstep. Each is (header, value-fn) over a raw entry dict.
+_FULL_EXPORT_COLS = [
+    ("serial_no", lambda e: e.get("serial_no", "")),
+    ("type",      lambda e: e.get("type", "")),
+    ("authors",   lambda e: "; ".join(_inv(l, f) for l, f in _people(e, "author"))),
+    ("editors",   lambda e: "; ".join(_inv(l, f) for l, f in _people(e, "editor"))),
+    ("year",      lambda e: e.get("year") or ""),
+    ("title",     lambda e: e.get("title", "")),
+    ("journal",   lambda e: e.get("journal", "")),
+    ("book_title", lambda e: e.get("book_title", "")),
+    ("volume",    lambda e: e.get("volume", "")),
+    ("issue",     lambda e: e.get("issue", "")),
+    ("pages",     lambda e: _pages(e)),
+    ("publisher", lambda e: e.get("publisher", "")),
+    ("city",      lambda e: e.get("city", "")),
+    ("url",       lambda e: e.get("url", "")),
+]
+
+
+def _export_xlsx(entries: list[dict]) -> bytes:
+    """Full corpus as a native .xlsx workbook — bold frozen header, auto-filter,
+    sensible column widths — so the overseer can open it straight in Excel or
+    Google Sheets. Mirrors _export_csv's columns via _FULL_EXPORT_COLS."""
+    import io
+    from openpyxl import Workbook
+    from openpyxl.styles import Font
+    from openpyxl.utils import get_column_letter
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "HB Bibliography"
+    ws.append([h for h, _ in _FULL_EXPORT_COLS])
+    for cell in ws[1]:
+        cell.font = Font(bold=True)
+    for e in entries:
+        ws.append([fn(e) for _, fn in _FULL_EXPORT_COLS])
+    ws.freeze_panes = "A2"
+    ws.auto_filter.ref = ws.dimensions
+    widths = [9, 14, 26, 22, 6, 50, 24, 24, 7, 7, 10, 22, 16, 40]
+    for i, w in enumerate(widths, start=1):
+        ws.column_dimensions[get_column_letter(i)].width = w
+    buf = io.BytesIO()
+    wb.save(buf)
     return buf.getvalue()
 
 
@@ -1228,6 +1277,102 @@ def export(req: ExportRequest):
     )
 
 
+# ── Full Bibliography tab: browse-everything grid + uncapped corpus download ───
+
+@app.get("/api/all")
+def all_records():
+    """Every corpus entry for the spreadsheet-style Full Bibliography tab. Carries
+    all the short tabular fields (so the 'Show all columns' toggle needs no extra
+    request) but omits the bulky abstract, which is lazy-fetched via /api/entry on
+    row expansion. The whole payload loads once (~0.7MB) and sorts/filters
+    client-side. ``venue`` is the merged Journal/Book/Publisher shown in the
+    compact core view."""
+    rows = _db.execute(
+        "SELECT * FROM entries ORDER BY year IS NULL, year DESC, title"
+    ).fetchall()
+    out = []
+    for r in rows:
+        d = _entry_to_dict(r)
+        out.append({
+            "sno": d.get("serial_no", ""),
+            "type": d.get("type", ""),
+            "year": d.get("year") or "",
+            "authors": d.get("author_display", ""),
+            "editors": "; ".join(_inv(l, f) for l, f in _people(d, "editor")),
+            "title": d.get("title", ""),
+            "journal": d.get("journal", "") or "",
+            "book_title": d.get("book_title", "") or "",
+            "volume": d.get("volume", "") or "",
+            "issue": d.get("issue", "") or "",
+            "pages": _pages(d),
+            "publisher": d.get("publisher", "") or "",
+            "city": d.get("city", "") or "",
+            "venue": d.get("journal") or d.get("book_title") or d.get("publisher") or "",
+            "url": d.get("url", "") or "",
+        })
+    return out
+
+
+@app.get("/api/entry")
+def entry_detail(id: str = Query(default="")):
+    """Full field set for one entry — powers row expansion in the Full
+    Bibliography tab (kept out of /api/all to keep the bulk payload small)."""
+    row = _db.execute(
+        "SELECT * FROM entries WHERE serial_no = ?", (str(id),)
+    ).fetchone()
+    if not row:
+        return JSONResponse(status_code=404, content={"error": "Entry not found."})
+    d = _entry_to_dict(row)
+    return {
+        "sno": d.get("serial_no", ""),
+        "type": d.get("type", ""),
+        "year": d.get("year") or "",
+        "authors": "; ".join(_inv(l, f) for l, f in _people(d, "author")),
+        "editors": "; ".join(_inv(l, f) for l, f in _people(d, "editor")),
+        "title": d.get("title", ""),
+        "journal": d.get("journal", ""),
+        "book_title": d.get("book_title", ""),
+        "volume": d.get("volume", ""),
+        "issue": d.get("issue", ""),
+        "pages": _pages(d),
+        "publisher": d.get("publisher", ""),
+        "city": d.get("city", ""),
+        "abstract": d.get("abstract", "") or "",
+        "url": d.get("url", "") or "",
+    }
+
+
+@app.get("/api/export-all")
+def export_all(format: str = Query(default="csv")):
+    """Download the ENTIRE corpus (uncapped) as one file — the on-site
+    replacement for a shared Google Sheet. CSV/XLSX give the full tabular record;
+    RIS/BibTeX feed reference managers."""
+    entries = _all_entries()
+    if not entries:
+        return JSONResponse(status_code=503, content={"error": "Corpus unavailable."})
+    fmt = (format or "csv").lower()
+    if fmt == "csv":
+        data = _export_csv(entries).encode("utf-8-sig", errors="replace")
+        media, ext = "text/csv; charset=utf-8", "csv"
+    elif fmt == "xlsx":
+        data = _export_xlsx(entries)
+        media = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        ext = "xlsx"
+    elif fmt == "ris":
+        data = _export_ris(entries).encode("utf-8", errors="replace")
+        media, ext = "application/x-research-info-systems; charset=utf-8", "ris"
+    elif fmt == "bibtex":
+        data = _export_bibtex(entries).encode("utf-8", errors="replace")
+        media, ext = "application/x-bibtex; charset=utf-8", "bib"
+    else:
+        return JSONResponse(status_code=400, content={"error": "Unknown export format."})
+    return Response(
+        content=data,
+        media_type=media,
+        headers={"Content-Disposition": f'attachment; filename="hb-bibliography-full.{ext}"'},
+    )
+
+
 @app.post("/api/chat-export")
 def chat_export(req: ChatExportRequest):
     """Export a single Q&A answer as an RTF working document (question + cited
@@ -1261,6 +1406,7 @@ def cite(id: str = Query(default="")):
         "mla": _strip_markers(_cite_mla(e)),
         "ris": _export_ris([e]),
         "bibtex": _export_bibtex([e]),
+        "url": (e.get("url") or "").strip(),
     }
 
 
@@ -1348,6 +1494,26 @@ def _build_system_prompt(entries: list[dict]) -> str:
     return _SYSTEM_PROMPT.format(n=len(entries), context=context)
 
 
+def _dedupe_entries(entries: list[dict]) -> list[dict]:
+    """Collapse duplicate works in a retrieval list so the same paper is never
+    numbered twice in a grounded answer. Without this, a work ingested twice (with
+    slightly different metadata) surfaced as two adjacent citations that looked
+    identical on screen — e.g. [12] and [13] — yet rendered differently in the
+    exported .rtf. Keys on normalised title + year (``\\w`` is Unicode-aware, so
+    CJK titles are preserved and only punctuation/whitespace is stripped); keeps
+    the first, best-ranked occurrence so numbering stays stable."""
+    seen: set = set()
+    out: list[dict] = []
+    for e in entries:
+        norm_title = re.sub(r"[^\w]+", "", (e.get("title") or "").lower())
+        key = (norm_title, str(e.get("year") or "")) if norm_title else (("sno", e.get("serial_no")),)
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(e)
+    return out
+
+
 @app.post("/api/chat")
 def chat(req: ChatRequest):
     if not _clients:
@@ -1370,7 +1536,9 @@ def chat(req: ChatRequest):
 
     # Retrieve grounding via the shared Unicode-aware extractor (_fts_rows) so
     # Chinese / Pali / diacritic terms are searched, not silently dropped.
-    entries = [_entry_to_dict(r) for r in _fts_rows(message, 50)]
+    # Dedupe so a work duplicated in the corpus isn't numbered twice (which
+    # produced identical-looking footnotes like [12] and [13]).
+    entries = _dedupe_entries([_entry_to_dict(r) for r in _fts_rows(message, 50)])
 
     # No grounding retrieved → don't call the LLM at all. With an empty corpus it
     # could only answer from outside knowledge, which this tool must never do.

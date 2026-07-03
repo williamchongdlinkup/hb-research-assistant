@@ -70,6 +70,10 @@
         class="px-5 py-3 text-sm font-medium border-b-2 border-transparent text-gray-500 hover:text-gray-700 -mb-px transition-colors">
         Reference Audit
       </button>
+      <button id="tab-btn-table" onclick="switchTab('table')"
+        class="px-5 py-3 text-sm font-medium border-b-2 border-transparent text-gray-500 hover:text-gray-700 -mb-px transition-colors">
+        Full Bibliography
+      </button>
     </div>
   </div>
 
@@ -91,8 +95,8 @@
         <p id="home-stats" class="mt-5 text-sm text-gray-400">Loading corpus…</p>
       </div>
 
-      <!-- Three entry points -->
-      <div class="mt-12 grid gap-4 sm:grid-cols-3">
+      <!-- Entry points -->
+      <div class="mt-12 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <button onclick="switchTab('search')"
           class="group text-left bg-white border border-gray-200 rounded-2xl p-6 shadow-sm hover:shadow-md hover:border-brand/40 transition-all">
           <div class="w-11 h-11 rounded-xl bg-brand/10 text-brand flex items-center justify-center mb-4">
@@ -131,6 +135,20 @@
           <h3 class="text-base font-semibold text-gray-900 group-hover:text-brand transition-colors">Reference Audit</h3>
           <p class="mt-1.5 text-sm text-gray-500 leading-relaxed">Paste a bibliography to see which references are in the corpus and which key works are missing.</p>
           <span class="inline-flex items-center gap-1 mt-3 text-sm font-medium text-brand">Run an audit
+            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
+          </span>
+        </button>
+
+        <button onclick="switchTab('table')"
+          class="group text-left bg-white border border-gray-200 rounded-2xl p-6 shadow-sm hover:shadow-md hover:border-brand/40 transition-all">
+          <div class="w-11 h-11 rounded-xl bg-brand/10 text-brand flex items-center justify-center mb-4">
+            <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 10h18M3 14h18M12 4v16M4 4h16a1 1 0 011 1v14a1 1 0 01-1 1H4a1 1 0 01-1-1V5a1 1 0 011-1z" />
+            </svg>
+          </div>
+          <h3 class="text-base font-semibold text-gray-900 group-hover:text-brand transition-colors">Full Bibliography</h3>
+          <p class="mt-1.5 text-sm text-gray-500 leading-relaxed">View the entire corpus as a sortable table, and download the whole collection as CSV, Excel, or a citation file.</p>
+          <span class="inline-flex items-center gap-1 mt-3 text-sm font-medium text-brand">View &amp; download
             <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
           </span>
         </button>
@@ -370,6 +388,79 @@
     </div>
   </div><!-- /tab-audit -->
 
+  <!-- ═══════════════════════════════════════════════════════════════════════ -->
+  <!-- Full Bibliography tab (spreadsheet-style view + whole-corpus download)   -->
+  <!-- ═══════════════════════════════════════════════════════════════════════ -->
+  <div id="tab-table" class="hidden">
+    <div class="max-w-7xl mx-auto px-4 py-6">
+
+      <!-- Header: intro + whole-corpus download -->
+      <div class="flex flex-col sm:flex-row sm:items-end sm:justify-between gap-3 mb-4">
+        <div>
+          <h2 class="text-lg font-semibold text-gray-900">Full bibliography</h2>
+          <p class="text-sm text-gray-500 mt-0.5">
+            The complete corpus — <span id="table-count" class="font-medium text-gray-700">…</span>.
+            Sort by any column, filter as you type, or download the whole collection.
+          </p>
+        </div>
+        <div class="relative flex-shrink-0">
+          <button onclick="toggleTableDownload()"
+            class="bg-brand text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-brand-dark transition-colors whitespace-nowrap">
+            Download all ▾
+          </button>
+          <div id="table-download-menu" class="hidden absolute right-0 top-full mt-2 w-72 bg-white border border-gray-200 rounded-xl shadow-xl p-3 text-sm z-20">
+            <p class="text-xs font-medium text-gray-500 mb-1">Spreadsheet</p>
+            <div class="space-y-0.5">
+              <button onclick="downloadAll('xlsx')" class="w-full text-left px-2 py-1.5 rounded hover:bg-gray-50 transition-colors">Excel workbook <span class="text-gray-400">(.xlsx)</span></button>
+              <button onclick="downloadAll('csv')" class="w-full text-left px-2 py-1.5 rounded hover:bg-gray-50 transition-colors">CSV <span class="text-gray-400">— opens in Excel / Sheets</span></button>
+            </div>
+            <hr class="my-2 border-gray-100" />
+            <p class="text-xs font-medium text-gray-500 mb-1">Reference manager</p>
+            <div class="space-y-0.5">
+              <button onclick="downloadAll('ris')" class="w-full text-left px-2 py-1.5 rounded hover:bg-gray-50 transition-colors">RIS <span class="text-gray-400">— Zotero, EndNote, Mendeley</span></button>
+              <button onclick="downloadAll('bibtex')" class="w-full text-left px-2 py-1.5 rounded hover:bg-gray-50 transition-colors">BibTeX <span class="text-gray-400">(.bib)</span></button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Filter + column toggle -->
+      <div class="mb-3 flex items-center gap-3 flex-wrap">
+        <div class="relative flex-1 min-w-[12rem] max-w-md">
+          <svg class="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+          </svg>
+          <input id="table-filter" type="text" oninput="onTableFilter(this.value)"
+            placeholder="Filter by title, author, year, type…"
+            class="w-full pl-9 pr-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-brand" autocomplete="off" />
+        </div>
+        <label class="flex items-center gap-1.5 text-xs text-gray-500 cursor-pointer select-none whitespace-nowrap">
+          <input id="table-allcols" type="checkbox" onclick="toggleAllCols(this.checked)"
+            class="rounded border-gray-300 text-brand focus:ring-brand" />
+          Show all columns <span class="text-gray-400">(vol, issue, pages…)</span>
+        </label>
+        <p id="table-showing" class="text-xs text-gray-400 whitespace-nowrap ml-auto"></p>
+      </div>
+
+      <!-- States -->
+      <div id="table-loading" class="hidden py-16 text-center">
+        <span class="spinner"></span>
+        <p class="text-sm text-gray-400 mt-2">Loading the full corpus…</p>
+      </div>
+      <div id="table-error" class="hidden py-10 text-center text-sm text-gray-500"></div>
+
+      <!-- Grid -->
+      <div id="table-wrap" class="hidden overflow-auto border border-gray-200 rounded-xl bg-white" style="max-height: calc(100vh - 250px);">
+        <table class="w-full text-sm border-collapse">
+          <thead class="sticky top-0 z-10 bg-gray-50 text-gray-600 select-none">
+            <tr id="table-head-row" class="text-left"></tr>
+          </thead>
+          <tbody id="table-body" class="divide-y divide-gray-100"></tbody>
+        </table>
+      </div>
+    </div>
+  </div><!-- /tab-table -->
+
   <!-- Selection / export bar (appears when results are ticked) -->
   <div id="selection-bar" class="hidden fixed bottom-0 inset-x-0 z-20 bg-white border-t border-gray-200 shadow-[0_-2px_10px_rgba(0,0,0,0.06)]">
     <div class="max-w-5xl mx-auto px-4 py-3 flex items-center gap-3">
@@ -433,16 +524,18 @@
     // Tab navigation
     // ═══════════════════════════════════════════════════════════════════════
     function switchTab(tab) {
-      // Toggle view panels (home + the three tools)
-      ['home', 'search', 'qa', 'audit'].forEach(t => {
+      // Toggle view panels (home + the four tools)
+      ['home', 'search', 'qa', 'audit', 'table'].forEach(t => {
         document.getElementById('tab-' + t).classList.toggle('hidden', t !== tab);
       });
       // Highlight the active tool tab; none highlighted on home
-      ['search', 'qa', 'audit'].forEach(t => {
+      ['search', 'qa', 'audit', 'table'].forEach(t => {
         document.getElementById('tab-btn-' + t).className =
           'px-5 py-3 text-sm font-medium border-b-2 -mb-px transition-colors ' +
           (t === tab ? 'border-brand text-brand' : 'border-transparent text-gray-500 hover:text-gray-700');
       });
+      // The full-corpus grid is heavy (~1,900 rows), so load it on first open only.
+      if (tab === 'table') loadTable();
       window.scrollTo({ top: 0, behavior: 'smooth' });
     }
 
@@ -866,6 +959,14 @@
       const panel = document.getElementById('cite-' + k);
       if (!data || !panel) return;
       const style = citeStyle[k] || 'chicago';
+      // Surface the source link right where users look for downloads. When it's a
+      // direct PDF, label it "Download .pdf" (the feedback: no obvious way to get
+      // the full text); otherwise it's a landing page, so "View source".
+      const srcUrl = (data.url && /^https?:\/\//i.test(data.url)) ? data.url.trim() : null;
+      const isPdf = srcUrl && /\.pdf(\?|#|$)/i.test(srcUrl);
+      const srcLink = srcUrl
+        ? `<a href="${escAttr(srcUrl)}" target="_blank" rel="noopener noreferrer" class="text-brand hover:underline">${isPdf ? 'Download .pdf' : 'View source ↗'}</a>`
+        : '';
       const styleBtn = (s, label) =>
         `<button onclick="setCiteStyle('${k}','${sno}','${s}')" class="px-2 py-0.5 rounded text-xs transition-colors ${style === s ? 'bg-brand text-white' : 'text-gray-500 hover:text-brand'}">${label}</button>`;
       panel.innerHTML = `
@@ -877,6 +978,7 @@
           </div>
           <p class="text-sm text-gray-700 leading-relaxed">${escHtml(data[style] || '')}</p>
           <div class="mt-2 flex flex-wrap gap-4 text-xs">
+            ${srcLink}
             <button onclick="downloadCite('${sno}','ris')" class="text-brand hover:underline">Download .ris <span class="text-gray-400">(Zotero, EndNote)</span></button>
             <button onclick="downloadCite('${sno}','bibtex')" class="text-brand hover:underline">Download .bib</button>
           </div>
@@ -1561,6 +1663,230 @@
         e.preventDefault();
         runAudit();
       }
+    });
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // Full Bibliography tab — spreadsheet-style grid + whole-corpus download
+    // ═══════════════════════════════════════════════════════════════════════
+    let tableData = null;                 // full list from /api/all (loaded once)
+    let tableView = [];                   // current filtered + sorted slice
+    let tableSort = { col: 'year', dir: 'desc' };
+    let tableFilterText = '';
+    let tableAllCols = false;             // false = compact core view; true = every column
+    const tableExpanded = new Set();      // sno's with an open detail row
+    const tableDetailCache = {};          // sno -> full record from /api/entry
+
+    // Column spec drives both the header and the rows. mode: 'both' shows always,
+    // 'core' only in the compact view, 'all' only when "Show all columns" is on.
+    // num:true right-aligns and sorts numerically.
+    const TABLE_COLS = [
+      { key: 'year',       label: 'Year',        mode: 'both', num: true,  th: 'w-16', td: 'text-gray-500 whitespace-nowrap' },
+      { key: 'type',       label: 'Type',        mode: 'both',             th: 'w-32', td: 'text-gray-500 whitespace-nowrap' },
+      { key: 'authors',    label: 'Author(s)',   mode: 'both',             th: 'w-52', td: 'text-gray-700' },
+      { key: 'editors',    label: 'Editor(s)',   mode: 'all',              th: 'w-40', td: 'text-gray-500' },
+      { key: 'title',      label: 'Title',       mode: 'both',             th: '',     td: 'text-gray-900 font-medium' },
+      { key: 'venue',      label: 'Publication', mode: 'core',             th: 'w-48', td: 'text-gray-500' },
+      { key: 'journal',    label: 'Journal',     mode: 'all',              th: 'w-44', td: 'text-gray-500' },
+      { key: 'book_title', label: 'Book',        mode: 'all',              th: 'w-40', td: 'text-gray-500' },
+      { key: 'volume',     label: 'Vol.',        mode: 'all', num: true,   th: 'w-14', td: 'text-gray-500 whitespace-nowrap' },
+      { key: 'issue',      label: 'Issue',       mode: 'all', num: true,   th: 'w-14', td: 'text-gray-500 whitespace-nowrap' },
+      { key: 'pages',      label: 'Pages',       mode: 'all', sort: false, th: 'w-24', td: 'text-gray-500 whitespace-nowrap' },
+      { key: 'publisher',  label: 'Publisher',   mode: 'all',              th: 'w-40', td: 'text-gray-500' },
+      { key: 'city',       label: 'City',        mode: 'all',              th: 'w-28', td: 'text-gray-500 whitespace-nowrap' },
+    ];
+    function activeCols() {
+      return TABLE_COLS.filter(c => tableAllCols ? c.mode !== 'core' : c.mode !== 'all');
+    }
+
+    async function loadTable() {
+      if (tableData) return;              // load the corpus once, then work client-side
+      const loading = document.getElementById('table-loading');
+      const wrap = document.getElementById('table-wrap');
+      const err = document.getElementById('table-error');
+      loading.classList.remove('hidden');
+      wrap.classList.add('hidden');
+      err.classList.add('hidden');
+      try {
+        const r = await fetch('/api/all');
+        if (!r.ok) throw new Error();
+        tableData = await r.json();
+      } catch (e) {
+        loading.classList.add('hidden');
+        err.textContent = 'Could not load the bibliography. Please refresh and try again.';
+        err.classList.remove('hidden');
+        return;
+      }
+      document.getElementById('table-count').textContent =
+        tableData.length.toLocaleString() + ' records';
+      loading.classList.add('hidden');
+      wrap.classList.remove('hidden');
+      applyTable();
+    }
+
+    function onTableFilter(v) {
+      tableFilterText = (v || '').trim().toLowerCase();
+      applyTable();
+    }
+
+    function sortTable(col) {
+      const spec = TABLE_COLS.find(c => c.key === col);
+      if (spec && spec.sort === false) return;               // e.g. Pages isn't sortable
+      if (tableSort.col === col) {
+        tableSort.dir = tableSort.dir === 'asc' ? 'desc' : 'asc';
+      } else {
+        tableSort.col = col;
+        tableSort.dir = (spec && spec.num) ? 'desc' : 'asc';  // numbers high-first, text A→Z
+      }
+      applyTable();
+    }
+
+    function toggleAllCols(on) {
+      tableAllCols = !!on;
+      // If the column we're sorted on is about to be hidden, fall back to Year.
+      if (!activeCols().some(c => c.key === tableSort.col)) {
+        tableSort = { col: 'year', dir: 'desc' };
+      }
+      applyTable();
+    }
+
+    function applyTable() {
+      if (!tableData) return;
+      const q = tableFilterText;
+      tableView = q
+        ? tableData.filter(e =>
+            (e.title + ' ' + e.authors + ' ' + e.editors + ' ' + e.venue + ' ' +
+             e.journal + ' ' + e.book_title + ' ' + e.publisher + ' ' + e.type + ' ' + e.year)
+              .toLowerCase().includes(q))
+        : tableData.slice();
+      const spec = TABLE_COLS.find(c => c.key === tableSort.col) || {};
+      const mul = tableSort.dir === 'asc' ? 1 : -1;
+      tableView.sort((a, b) => {
+        if (spec.num) return ((parseInt(a[spec.key]) || 0) - (parseInt(b[spec.key]) || 0)) * mul;
+        const av = (a[tableSort.col] || '').toString().toLowerCase();
+        const bv = (b[tableSort.col] || '').toString().toLowerCase();
+        return av < bv ? -mul : av > bv ? mul : 0;
+      });
+      renderTableHead();
+      renderTableBody();
+      document.getElementById('table-showing').textContent = q
+        ? `${tableView.length.toLocaleString()} of ${tableData.length.toLocaleString()} shown`
+        : `${tableData.length.toLocaleString()} records`;
+    }
+
+    function renderTableHead() {
+      const cells = activeCols().map(c => {
+        const active = c.key === tableSort.col;
+        const arrow = active ? (tableSort.dir === 'asc' ? ' ▲' : ' ▼') : '';
+        const sortable = c.sort !== false;
+        const cls = 'px-3 py-2.5 font-medium border-b border-gray-200 ' + (c.th || '')
+          + (sortable ? ' cursor-pointer hover:text-brand' : '')
+          + (active ? ' text-brand' : '');
+        const onclick = sortable ? ` onclick="sortTable('${c.key}')"` : '';
+        return `<th class="${cls}"${onclick}>${escHtml(c.label)}${arrow}</th>`;
+      });
+      cells.push('<th class="px-3 py-2.5 border-b border-gray-200 w-10"></th>');  // expand chevron
+      document.getElementById('table-head-row').innerHTML = cells.join('');
+    }
+
+    function renderTableBody() {
+      const tbody = document.getElementById('table-body');
+      const cols = activeCols();
+      const span = cols.length + 1;
+      if (!tableView.length) {
+        tbody.innerHTML = `<tr><td colspan="${span}" class="px-3 py-10 text-center text-sm text-gray-400">No records match “${escHtml(tableFilterText)}”.</td></tr>`;
+        return;
+      }
+      const rows = [];
+      for (const e of tableView) {
+        const sno = String(e.sno);
+        const open = tableExpanded.has(sno);
+        const cells = cols.map(c => {
+          let val = e[c.key];
+          if (val === '' || val === null || val === undefined) {
+            val = (c.key === 'year' || c.key === 'authors') ? '—' : '';  // blank empties read cleaner
+          }
+          return `<td class="px-3 py-2 ${c.td || ''}">${escHtml(val)}</td>`;
+        }).join('');
+        rows.push(
+          `<tr onclick="toggleTableRow('${escAttr(sno)}')" class="cursor-pointer hover:bg-brand/5 ${open ? 'bg-brand/5' : ''} align-top">
+            ${cells}
+            <td class="px-3 py-2 text-gray-400 text-center">${open ? '▾' : '▸'}</td>
+          </tr>` +
+          (open
+            ? `<tr><td colspan="${span}" class="px-3 pb-4 pt-0 bg-brand/[0.03]"><div id="tbl-detail-body-${escAttr(sno)}"></div></td></tr>`
+            : '')
+        );
+      }
+      tbody.innerHTML = rows.join('');
+      for (const sno of tableExpanded) renderTableDetail(sno);   // rehydrate open rows
+    }
+
+    function toggleTableRow(sno) {
+      sno = String(sno);
+      if (tableExpanded.has(sno)) tableExpanded.delete(sno);
+      else tableExpanded.add(sno);
+      renderTableBody();
+    }
+
+    async function renderTableDetail(sno) {
+      const host = document.getElementById('tbl-detail-body-' + sno);
+      if (!host) return;
+      if (!tableDetailCache[sno]) {
+        host.innerHTML = '<p class="text-xs text-gray-400 py-2">Loading…</p>';
+        try {
+          const r = await fetch('/api/entry?id=' + encodeURIComponent(sno));
+          if (!r.ok) throw new Error();
+          tableDetailCache[sno] = await r.json();
+        } catch (e) {
+          const h = document.getElementById('tbl-detail-body-' + sno);
+          if (h) h.innerHTML = '<p class="text-xs text-red-600 py-2">Could not load this record.</p>';
+          return;
+        }
+      }
+      const d = tableDetailCache[sno];
+      const host2 = document.getElementById('tbl-detail-body-' + sno);
+      if (!host2) return;                 // user collapsed the row while it loaded
+      const fld = (label, val) => val
+        ? `<div><dt class="text-xs text-gray-400">${label}</dt><dd class="text-sm text-gray-700">${escHtml(val)}</dd></div>` : '';
+      const venueBits = [d.journal, d.book_title].filter(Boolean).join(' · ');
+      const pubBits = [d.publisher, d.city].filter(Boolean).join(', ');
+      const volIssue = [d.volume && ('Vol. ' + d.volume), d.issue && ('No. ' + d.issue), d.pages && ('pp. ' + d.pages)].filter(Boolean).join(', ');
+      host2.innerHTML = `
+        <div class="rounded-lg border border-gray-100 bg-white p-4 mt-1">
+          ${d.abstract
+            ? `<p class="text-sm text-gray-600 leading-relaxed mb-3">${escHtml(d.abstract)}</p>`
+            : '<p class="text-xs text-gray-400 italic mb-3">No abstract on record.</p>'}
+          <dl class="grid gap-x-6 gap-y-2 sm:grid-cols-2">
+            ${fld('Author(s)', d.authors)}
+            ${fld('Editor(s)', d.editors)}
+            ${fld('Journal / Book', venueBits)}
+            ${fld('Volume / issue / pages', volIssue)}
+            ${fld('Publisher', pubBits)}
+            ${fld('Type', d.type)}
+          </dl>
+          <div class="mt-3 pt-2">
+            <button onclick="event.stopPropagation(); openCite('tbl-${escAttr(sno)}','${escAttr(sno)}')"
+              class="text-sm text-brand hover:underline font-medium">Cite ▾</button>
+          </div>
+          <div id="cite-tbl-${escAttr(sno)}" class="hidden"></div>
+        </div>`;
+    }
+
+    function toggleTableDownload() {
+      document.getElementById('table-download-menu').classList.toggle('hidden');
+    }
+    function downloadAll(fmt) {
+      document.getElementById('table-download-menu').classList.add('hidden');
+      // GET endpoint returns an attachment; navigating to it triggers the download.
+      window.location.href = '/api/export-all?format=' + encodeURIComponent(fmt);
+    }
+    // Close the download menu when clicking outside it.
+    document.addEventListener('click', (e) => {
+      const menu = document.getElementById('table-download-menu');
+      if (!menu || menu.classList.contains('hidden')) return;
+      if (e.target.closest('#table-download-menu') ||
+          e.target.closest('button[onclick="toggleTableDownload()"]')) return;
+      menu.classList.add('hidden');
     });
 
     // ═══════════════════════════════════════════════════════════════════════
