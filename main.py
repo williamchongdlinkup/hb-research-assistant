@@ -1,6 +1,7 @@
 import csv
 import json
 import logging
+import math
 import sqlite3
 import os
 import re
@@ -29,6 +30,212 @@ ABSTRACT_EXCERPT_LEN = 250
 # swapped (no template change needed).
 CORPUS_LAST_UPDATED = "June 2026"
 GEMINI_MODEL = "gemini-3.1-flash-lite"
+
+# ── Ask the Primary Sources — FoguangPedia EN chatbot ─────────────────────────
+FGP_DB_PATH       = Path(__file__).parent / "data" / "foguangpedia.db"
+_FGP_DEPTH        = 50
+_FGP_N_ART        = 5
+_FGP_PCT          = 0.10
+_FGP_FLOOR        = 3
+_FGP_PASSAGES     = 12
+_FGP_MAX_TURNS    = 5
+_FGP_MAX_MSG      = 4000
+_FGP_MAX_HIST     = 12
+_FGP_VOYAGE_MODEL = "voyage-3.5"
+
+_fgp_mat:          object = None   # np.ndarray (N, 1024)
+_fgp_para_ids:     object = None
+_fgp_pass_ids:     object = None
+_fgp_sum_mat:      object = None   # np.ndarray (M, 1024) — OI summary embeddings
+_fgp_sum_pass_ids: object = None
+_fgp_para_counts:  dict   = {}
+_fgp_fps:          dict   = {}
+_fgp_vc:           object = None   # voyageai.Client
+_fgp_ready:        bool   = False
+
+try:
+    import numpy as _np
+except ImportError:
+    _np = None
+
+
+def _load_fgp() -> None:
+    """Load foguangpedia.db embeddings into memory once at startup (background thread)."""
+    global _fgp_mat, _fgp_para_ids, _fgp_pass_ids
+    global _fgp_sum_mat, _fgp_sum_pass_ids
+    global _fgp_para_counts, _fgp_fps, _fgp_vc, _fgp_ready
+
+    if not FGP_DB_PATH.exists():
+        logger.warning("foguangpedia.db not found at %s; /primarysources disabled", FGP_DB_PATH)
+        return
+    voyage_key = os.environ.get("VOYAGE_API_KEY", "").strip()
+    if not voyage_key:
+        logger.warning("VOYAGE_API_KEY not set; /primarysources disabled")
+        return
+    if _np is None:
+        logger.warning("numpy unavailable; /primarysources disabled")
+        return
+    try:
+        import voyageai as _vai
+        _fgp_vc = _vai.Client(api_key=voyage_key)
+    except ImportError:
+        logger.warning("voyageai not installed; /primarysources disabled")
+        return
+
+    con = sqlite3.connect(FGP_DB_PATH)
+    try:
+        def _unpack(blob):
+            return _np.frombuffer(blob, dtype="<f4").copy()
+
+        rows = con.execute(
+            "SELECT e.para_id, e.passage_id, e.vector FROM embeddings e"
+        ).fetchall()
+        if not rows:
+            logger.warning("No paragraph embeddings in foguangpedia.db; /primarysources disabled")
+            return
+        _fgp_para_ids = _np.array([r[0] for r in rows], dtype=_np.int64)
+        _fgp_pass_ids = _np.array([r[1] for r in rows], dtype=_np.int64)
+        _fgp_mat      = _np.stack([_unpack(r[2]) for r in rows]).astype(_np.float32)
+
+        sum_rows = []
+        try:
+            sum_rows = con.execute(
+                "SELECT passage_id, summary_vector FROM article_summaries"
+            ).fetchall()
+        except sqlite3.OperationalError:
+            pass
+        if sum_rows:
+            _fgp_sum_pass_ids = _np.array([r[0] for r in sum_rows], dtype=_np.int64)
+            _fgp_sum_mat      = _np.stack([_unpack(r[1]) for r in sum_rows]).astype(_np.float32)
+
+        _fgp_para_counts = {
+            r[0]: r[1]
+            for r in con.execute(
+                "SELECT passage_id, COUNT(*) FROM paragraphs GROUP BY passage_id"
+            )
+        }
+        _fgp_fps = {
+            r[0]: r[1].strip()[:300]
+            for r in con.execute("SELECT id, text FROM paragraphs")
+        }
+        logger.info(
+            "FoguangPedia loaded: %d paragraph embeddings, %d OI summaries",
+            len(rows), len(sum_rows),
+        )
+        _fgp_ready = True
+    finally:
+        con.close()
+
+
+def _fgp_n_para(passage_id: int) -> int:
+    return max(_FGP_FLOOR, math.ceil(_fgp_para_counts.get(passage_id, 1) * _FGP_PCT))
+
+
+def _fgp_dedup(ranked: list, fps: dict) -> list:
+    seen, out = set(), []
+    for pid, passid in ranked:
+        fp = fps.get(pid)
+        if fp and fp in seen:
+            continue
+        if fp:
+            seen.add(fp)
+        out.append((pid, passid))
+    return out
+
+
+def _fgp_retrieve(qv) -> list:
+    """SumOI-first dense retrieval over the FoguangPedia corpus."""
+    all_sims = _fgp_mat @ qv
+
+    sumoi_ranked: list = []
+    sumoi_pids: set = set()
+    if _fgp_sum_mat is not None and _fgp_sum_pass_ids is not None:
+        art_sims   = _fgp_sum_mat @ qv
+        top_art_ix = _np.argsort(-art_sims)[:_FGP_N_ART]
+        for i in top_art_ix:
+            passid    = int(_fgp_sum_pass_ids[i])
+            mask      = _fgp_pass_ids == passid
+            if not _np.any(mask):
+                continue
+            p_ids_art = _fgp_para_ids[mask]
+            p_mat_art = _fgp_mat[mask]
+            n_para    = _fgp_n_para(passid)
+            sims      = p_mat_art @ qv
+            top_para  = _np.argsort(-sims)[:n_para]
+            for j in top_para:
+                pid = int(p_ids_art[j])
+                sumoi_ranked.append((pid, passid))
+                sumoi_pids.add(pid)
+
+    dense_top_idx = _np.argsort(-all_sims)[:_FGP_DEPTH]
+    dense_extra = [
+        (int(_fgp_para_ids[i]), int(_fgp_pass_ids[i]))
+        for i in dense_top_idx
+        if int(_fgp_para_ids[i]) not in sumoi_pids
+    ]
+
+    return _fgp_dedup(sumoi_ranked + dense_extra, _fgp_fps)
+
+
+def _fgp_retrieval_query(message: str, history: list) -> str:
+    """Expand current message with the previous user turn for anaphora resolution."""
+    prev = next((m.content for m in reversed(history) if m.role == "user"), None)
+    if not prev:
+        return message
+    return f"{prev[:200]} {message}"
+
+
+_FGP_SYSTEM_PROMPT = """\
+You are a research assistant for Venerable Master Hsing Yun's English works published on \
+FoguangPedia (books.masterhsingyun.org), serving scholars studying Humanistic Buddhism. \
+Answer EXCLUSIVELY from the FoguangPedia passages listed below. Do not draw on any outside knowledge.
+
+Rules (follow strictly):
+1. Write in flowing academic prose. No bullet points, numbered lists, or headers.
+2. Place ONE inline citation [N] immediately after the most relevant factual claim \
+in each sentence, where N is the passage number from the list below. Use two citations \
+[N][M] only when two passages each contribute a distinct, essential piece of evidence \
+for that single sentence. Never stack three or more citations on one sentence.
+3. Cite only passage numbers that appear in the list below. Only cite [N] if the \
+specific words or idea you are conveying are directly present in passage [N]'s text — \
+do not cite a passage for general topical relevance or background context.
+4. If the passages do not contain enough information to answer, respond ONLY with: \
+"The FoguangPedia passages retrieved do not appear to contain sufficient information to answer this question."
+
+FoguangPedia passages retrieved for this query ({n} passages):
+
+{context}\
+"""
+
+_FGP_INSUFFICIENT = (
+    "The FoguangPedia passages retrieved do not appear to contain sufficient information "
+    "to answer this question."
+)
+
+
+def _fgp_build_prompt(passages: list) -> str:
+    parts = []
+    for i, p in enumerate(passages, 1):
+        header = f"[{i}] {p['article_title']}"
+        if p.get("work_name"):
+            header += f" ({p['work_name']})"
+        if p.get("foguangpedia_url"):
+            header += f"\nURL: {p['foguangpedia_url']}"
+        body = "\n\n".join(p["snippets"])
+        parts.append(f"{header}\n{body}")
+    context = "\n\n".join(parts)
+    return _FGP_SYSTEM_PROMPT.format(n=len(passages), context=context)
+
+
+class FGPAskMessage(BaseModel):
+    role: str
+    content: str
+
+
+class FGPAskRequest(BaseModel):
+    message: str
+    history: list[FGPAskMessage] = []
+
 
 # Grounded Q&A / input guards. The browser enforces a 5-turn cap for UX; these are
 # the authoritative server-side limits that bound prompt size and per-session cost.
@@ -388,6 +595,7 @@ async def lifespan(app: FastAPI):
     global _db
     _db = _build_db()
     _validate_model_on_startup()
+    threading.Thread(target=_load_fgp, daemon=True).start()
     yield
 
 
@@ -1909,3 +2117,131 @@ def audit(req: AuditRequest):
         "suggested": suggested,
         "pool_size": len(entries),
     }
+
+
+# ── Ask the Primary Sources — endpoints (requires app, placed after definition) ─
+
+@app.get("/api/ask-primary/status")
+def ask_primary_status():
+    return {
+        "enabled": _fgp_ready and bool(_clients),
+        "paragraphs": int(_fgp_mat.shape[0]) if _fgp_mat is not None else 0,
+        "oi_summaries": int(_fgp_sum_mat.shape[0]) if _fgp_sum_mat is not None else 0,
+    }
+
+
+@app.post("/api/ask-primary")
+def ask_primary(req: FGPAskRequest):
+    if not _fgp_ready:
+        return JSONResponse(status_code=503, content={"error": "Ask the Primary Sources is warming up — please try again in a moment."})
+    if not _clients:
+        return JSONResponse(status_code=503, content={"error": "AI service not configured."})
+
+    message = (req.message or "").strip()
+    if not message:
+        return JSONResponse(status_code=400, content={"error": "Please enter a question."})
+    if len(message) > _FGP_MAX_MSG:
+        return JSONResponse(status_code=400, content={"error": "Question is too long; please shorten it."})
+    if sum(1 for m in req.history if m.role == "user") >= _FGP_MAX_TURNS:
+        return JSONResponse(
+            status_code=429,
+            content={"error": "Conversation turn limit reached. Please start a new conversation."},
+        )
+
+    rq = _fgp_retrieval_query(message, req.history)
+
+    try:
+        result = _fgp_vc.embed([rq], model=_FGP_VOYAGE_MODEL, input_type="query")
+        qv = _np.array(result.embeddings[0], dtype=_np.float32)
+        qv = qv / (float(_np.linalg.norm(qv)) or 1.0)
+    except Exception:
+        logger.exception("Voyage embedding failed for ask-primary")
+        return JSONResponse(status_code=502, content={"error": "Retrieval service failed. Please try again."})
+
+    ranked = _fgp_retrieve(qv)
+    seen_pass: set = set()
+    passage_order: list = []
+    paras_by_pass: dict = {}
+    for pid, passid in ranked:
+        if passid not in seen_pass:
+            seen_pass.add(passid)
+            passage_order.append(passid)
+            paras_by_pass[passid] = []
+        if len(passage_order) <= _FGP_PASSAGES:
+            paras_by_pass[passid].append(pid)
+    passage_order = passage_order[:_FGP_PASSAGES]
+
+    if not passage_order:
+        return {"answer": _FGP_INSUFFICIENT, "citations": [], "sources_count": 0, "cited_count": 0}
+
+    con = sqlite3.connect(FGP_DB_PATH)
+    con.row_factory = sqlite3.Row
+    try:
+        passages = []
+        for passid in passage_order:
+            p = con.execute(
+                "SELECT p.id, p.article_title, p.foguangpedia_url, p.en_pdf_url, w.name AS work_name "
+                "FROM passages p JOIN works w ON w.id = p.work_id WHERE p.id=?",
+                (passid,),
+            ).fetchone()
+            if not p:
+                continue
+            texts = []
+            for para_id in paras_by_pass.get(passid, [])[:3]:
+                t = con.execute("SELECT text FROM paragraphs WHERE id=?", (para_id,)).fetchone()
+                if t:
+                    texts.append(t["text"])
+            passages.append({
+                "passage_id": passid,
+                "article_title": p["article_title"],
+                "work_name": p["work_name"] or "",
+                "foguangpedia_url": p["foguangpedia_url"] or "",
+                "en_pdf_url": p["en_pdf_url"] or "",
+                "snippets": texts,
+            })
+    finally:
+        con.close()
+
+    if not passages:
+        return {"answer": _FGP_INSUFFICIENT, "citations": [], "sources_count": 0, "cited_count": 0}
+
+    system_prompt = _fgp_build_prompt(passages)
+    gem_history = [
+        genai_types.Content(role=m.role, parts=[genai_types.Part(text=m.content)])
+        for m in req.history[-_FGP_MAX_HIST:]
+    ]
+    try:
+        answer = _chat_with_rotation(system_prompt, gem_history, message).text
+    except Exception:
+        logger.exception("Gemini chat failed for ask-primary")
+        return JSONResponse(status_code=502, content={"error": "AI service failed to respond. Please try again."})
+
+    used = sorted({int(n) for n in re.findall(r"\[(\d+)\]", answer)})
+    citations = []
+    for n in used:
+        if not (1 <= n <= len(passages)):
+            continue
+        p = passages[n - 1]
+        snippet = (p["snippets"][0] if p["snippets"] else "")[:280]
+        def _valid_url(u):
+            return u and u.startswith("https://") and "null" not in u
+        url = next((u for u in (p["en_pdf_url"], p["foguangpedia_url"]) if _valid_url(u)), "")
+        citations.append({
+            "number": n,
+            "article_title": p["article_title"],
+            "work_name": p["work_name"],
+            "url": url,
+        })
+
+    return {
+        "answer": answer,
+        "citations": citations,
+        "sources_count": len(passages),
+        "cited_count": len(citations),
+    }
+
+
+@app.get("/primarysources", response_class=HTMLResponse)
+def primary_sources_page():
+    html_path = Path(__file__).parent / "static" / "primarysources.html"
+    return HTMLResponse(content=html_path.read_text(encoding="utf-8"))
