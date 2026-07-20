@@ -6,6 +6,7 @@ __pycache__/
 .Python
 *.sqlite3
 *.db
+!data/foguangpedia.db
 .venv/
 venv/
 env/
