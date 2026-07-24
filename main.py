@@ -199,7 +199,9 @@ for that single sentence. Never stack three or more citations on one sentence.
 3. Cite only passage numbers that appear in the list below. Only cite [N] if the \
 specific words or idea you are conveying are directly present in passage [N]'s text — \
 do not cite a passage for general topical relevance or background context.
-4. If the passages do not contain enough information to answer, respond ONLY with: \
+4. Do NOT include any URLs, hyperlinks, or web addresses in your response — the interface \
+renders citations as links automatically.
+5. If the passages do not contain enough information to answer, respond ONLY with: \
 "The FoguangPedia passages retrieved do not appear to contain sufficient information to answer this question."
 
 FoguangPedia passages retrieved for this query ({n} passages):
@@ -219,8 +221,9 @@ def _fgp_build_prompt(passages: list) -> str:
         header = f"[{i}] {p['article_title']}"
         if p.get("work_name"):
             header += f" ({p['work_name']})"
-        if p.get("foguangpedia_url"):
-            header += f"\nURL: {p['foguangpedia_url']}"
+        en_url = p.get("en_pdf_url") or ""
+        if en_url and "null" not in en_url:
+            header += f"\nEnglish PDF: {en_url}"
         body = "\n\n".join(p["snippets"])
         parts.append(f"{header}\n{body}")
     context = "\n\n".join(parts)
@@ -2224,8 +2227,9 @@ def ask_primary(req: FGPAskRequest):
         p = passages[n - 1]
         snippet = (p["snippets"][0] if p["snippets"] else "")[:280]
         def _valid_url(u):
-            return u and u.startswith("https://") and "null" not in u
-        url = next((u for u in (p["en_pdf_url"], p["foguangpedia_url"]) if _valid_url(u)), "")
+            return u and (u.startswith("https://") or u.startswith("http://")) and "null" not in u
+        en_url = p.get("en_pdf_url") or ""
+        url = en_url if _valid_url(en_url) else ""
         citations.append({
             "number": n,
             "article_title": p["article_title"],
