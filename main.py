@@ -64,6 +64,28 @@ except ImportError:
     _svec_ser = None
 
 
+def _build_vec_index(con: sqlite3.Connection) -> None:
+    """Populate vec_paragraphs from the embeddings table. Runs once per fresh container."""
+    import struct
+    con.execute("CREATE VIRTUAL TABLE vec_paragraphs USING vec0(embedding float[1024])")
+    rows = con.execute("SELECT para_id, vector FROM embeddings ORDER BY para_id").fetchall()
+    batch: list = []
+    for para_id, blob in rows:
+        floats = struct.unpack(f"{len(blob) // 4}f", blob)
+        batch.append((para_id, _svec_ser(floats)))
+        if len(batch) == 500:
+            con.executemany(
+                "INSERT INTO vec_paragraphs(rowid, embedding) VALUES (?, ?)", batch
+            )
+            batch = []
+    if batch:
+        con.executemany(
+            "INSERT INTO vec_paragraphs(rowid, embedding) VALUES (?, ?)", batch
+        )
+    con.commit()
+    logger.info("vec_paragraphs built: %d rows", len(rows))
+
+
 def _load_fgp() -> None:
     """Verify foguangpedia.db is ready and load the small in-memory structures."""
     global _fgp_para_count
@@ -95,17 +117,24 @@ def _load_fgp() -> None:
     _svec.load(con)
     con.enable_load_extension(False)
     try:
-        # Verify vec_paragraphs virtual table was built by migrate_vec.py
+        # Build vec_paragraphs on first boot if missing (persists in container writable layer)
         try:
             _fgp_para_count = con.execute(
                 "SELECT COUNT(*) FROM vec_paragraphs"
             ).fetchone()[0]
         except sqlite3.OperationalError:
-            logger.warning(
-                "vec_paragraphs table missing in foguangpedia.db — "
-                "run migrate_vec.py then redeploy; /primarysources disabled"
+            logger.info(
+                "vec_paragraphs missing — running one-time migration (~60s); "
+                "/primarysources will be ready when it finishes"
             )
-            return
+            _build_vec_index(con)
+            try:
+                _fgp_para_count = con.execute(
+                    "SELECT COUNT(*) FROM vec_paragraphs"
+                ).fetchone()[0]
+            except Exception:
+                logger.warning("vec_paragraphs migration failed; /primarysources disabled")
+                return
         if _fgp_para_count == 0:
             logger.warning("vec_paragraphs is empty; /primarysources disabled")
             return
