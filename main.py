@@ -10,8 +10,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Optional
 
-from google import genai
-from google.genai import types as genai_types
+import httpx
 from dotenv import load_dotenv
 from fastapi import FastAPI, Query
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
@@ -23,6 +22,7 @@ load_dotenv()
 logger = logging.getLogger("hb_research_assistant")
 
 CSV_PATH = Path(__file__).parent / "data" / "HBBiblio_Jun2026_Master.csv"
+BIBLIO_DB_PATH = Path(__file__).parent / "data" / "biblio.db"
 STATIC_DIR = Path(__file__).parent / "static"
 ABSTRACT_EXCERPT_LEN = 250
 # Human-readable snapshot date for the current corpus. Surfaced via /api/stats
@@ -43,10 +43,8 @@ _FGP_MAX_MSG      = 4000
 _FGP_MAX_HIST     = 12
 _FGP_VOYAGE_MODEL = "voyage-3.5"
 
-_fgp_mat:          object = None   # np.ndarray (N, 1024)
-_fgp_para_ids:     object = None
-_fgp_pass_ids:     object = None
-_fgp_sum_mat:      object = None   # np.ndarray (M, 1024) — OI summary embeddings
+_fgp_para_count:   int    = 0      # total paragraphs indexed in vec_paragraphs
+_fgp_sum_mat:      object = None   # np.ndarray (M, 1024) — OI summary embeddings (27 rows, 0.1 MB)
 _fgp_sum_pass_ids: object = None
 _fgp_para_counts:  dict   = {}
 _fgp_fps:          dict   = {}
@@ -58,10 +56,17 @@ try:
 except ImportError:
     _np = None
 
+try:
+    import sqlite_vec as _svec
+    from sqlite_vec import serialize_float32 as _svec_ser
+except ImportError:
+    _svec = None
+    _svec_ser = None
+
 
 def _load_fgp() -> None:
-    """Load foguangpedia.db embeddings into memory once at startup (background thread)."""
-    global _fgp_mat, _fgp_para_ids, _fgp_pass_ids
+    """Verify foguangpedia.db is ready and load the small in-memory structures."""
+    global _fgp_para_count
     global _fgp_sum_mat, _fgp_sum_pass_ids
     global _fgp_para_counts, _fgp_fps, _fgp_vc, _fgp_ready
 
@@ -75,6 +80,9 @@ def _load_fgp() -> None:
     if _np is None:
         logger.warning("numpy unavailable; /primarysources disabled")
         return
+    if _svec is None:
+        logger.warning("sqlite-vec not installed; /primarysources disabled")
+        return
     try:
         import voyageai as _vai
         _fgp_vc = _vai.Client(api_key=voyage_key)
@@ -82,21 +90,30 @@ def _load_fgp() -> None:
         logger.warning("voyageai not installed; /primarysources disabled")
         return
 
-    con = sqlite3.connect(FGP_DB_PATH)
+    con = sqlite3.connect(str(FGP_DB_PATH))
+    con.enable_load_extension(True)
+    _svec.load(con)
+    con.enable_load_extension(False)
     try:
+        # Verify vec_paragraphs virtual table was built by migrate_vec.py
+        try:
+            _fgp_para_count = con.execute(
+                "SELECT COUNT(*) FROM vec_paragraphs"
+            ).fetchone()[0]
+        except sqlite3.OperationalError:
+            logger.warning(
+                "vec_paragraphs table missing in foguangpedia.db — "
+                "run migrate_vec.py then redeploy; /primarysources disabled"
+            )
+            return
+        if _fgp_para_count == 0:
+            logger.warning("vec_paragraphs is empty; /primarysources disabled")
+            return
+
         def _unpack(blob):
             return _np.frombuffer(blob, dtype="<f4").copy()
 
-        rows = con.execute(
-            "SELECT e.para_id, e.passage_id, e.vector FROM embeddings e"
-        ).fetchall()
-        if not rows:
-            logger.warning("No paragraph embeddings in foguangpedia.db; /primarysources disabled")
-            return
-        _fgp_para_ids = _np.array([r[0] for r in rows], dtype=_np.int64)
-        _fgp_pass_ids = _np.array([r[1] for r in rows], dtype=_np.int64)
-        _fgp_mat      = _np.stack([_unpack(r[2]) for r in rows]).astype(_np.float32)
-
+        # Article-level OI summaries — only 27 rows (0.1 MB), keep in RAM
         sum_rows = []
         try:
             sum_rows = con.execute(
@@ -108,19 +125,21 @@ def _load_fgp() -> None:
             _fgp_sum_pass_ids = _np.array([r[0] for r in sum_rows], dtype=_np.int64)
             _fgp_sum_mat      = _np.stack([_unpack(r[1]) for r in sum_rows]).astype(_np.float32)
 
+        # Paragraph counts per passage — small dict, used for proportional selection
         _fgp_para_counts = {
             r[0]: r[1]
             for r in con.execute(
                 "SELECT passage_id, COUNT(*) FROM paragraphs GROUP BY passage_id"
             )
         }
+        # First 300 chars of each paragraph — used for deduplication (~4 MB)
         _fgp_fps = {
             r[0]: r[1].strip()[:300]
             for r in con.execute("SELECT id, text FROM paragraphs")
         }
         logger.info(
-            "FoguangPedia loaded: %d paragraph embeddings, %d OI summaries",
-            len(rows), len(sum_rows),
+            "FoguangPedia ready: %d paragraphs in vec index, %d OI summaries",
+            _fgp_para_count, len(sum_rows),
         )
         _fgp_ready = True
     finally:
@@ -143,35 +162,54 @@ def _fgp_dedup(ranked: list, fps: dict) -> list:
     return out
 
 
-def _fgp_retrieve(qv) -> list:
-    """SumOI-first dense retrieval over the FoguangPedia corpus."""
-    all_sims = _fgp_mat @ qv
+def _fgp_retrieve(qv, con: sqlite3.Connection) -> list:
+    """SumOI-first retrieval: in-RAM summary scoring + sqlite-vec global search."""
+    qv_blob = _svec_ser(qv.tolist())
 
     sumoi_ranked: list = []
     sumoi_pids: set = set()
+
     if _fgp_sum_mat is not None and _fgp_sum_pass_ids is not None:
+        # Stage 1: score the 27 article summaries in RAM — exact, trivial
         art_sims   = _fgp_sum_mat @ qv
         top_art_ix = _np.argsort(-art_sims)[:_FGP_N_ART]
         for i in top_art_ix:
-            passid    = int(_fgp_sum_pass_ids[i])
-            mask      = _fgp_pass_ids == passid
-            if not _np.any(mask):
+            passid = int(_fgp_sum_pass_ids[i])
+            # Fetch only this article's paragraph vectors on demand (~22 rows avg)
+            para_rows = con.execute(
+                "SELECT para_id, vector FROM embeddings WHERE passage_id = ?",
+                (passid,),
+            ).fetchall()
+            if not para_rows:
                 continue
-            p_ids_art = _fgp_para_ids[mask]
-            p_mat_art = _fgp_mat[mask]
-            n_para    = _fgp_n_para(passid)
-            sims      = p_mat_art @ qv
-            top_para  = _np.argsort(-sims)[:n_para]
-            for j in top_para:
-                pid = int(p_ids_art[j])
+            n_para = _fgp_n_para(passid)
+            # Exact brute-force on the small per-article set
+            scored = sorted(
+                (
+                    (int(r[0]), float(_np.dot(_np.frombuffer(r[1], dtype="<f4"), qv)))
+                    for r in para_rows
+                ),
+                key=lambda x: -x[1],
+            )
+            for pid, _ in scored[:n_para]:
                 sumoi_ranked.append((pid, passid))
                 sumoi_pids.add(pid)
 
-    dense_top_idx = _np.argsort(-all_sims)[:_FGP_DEPTH]
+    # Stage 2: global dense fill via sqlite-vec HNSW (effectively exact at 15K scale)
+    vec_rows = con.execute(
+        """
+        SELECT v.rowid AS para_id, e.passage_id
+        FROM   vec_paragraphs v
+        JOIN   embeddings e ON e.para_id = v.rowid
+        WHERE  v.embedding MATCH ? AND k = ?
+        """,
+        [qv_blob, _FGP_DEPTH],
+    ).fetchall()
+
     dense_extra = [
-        (int(_fgp_para_ids[i]), int(_fgp_pass_ids[i]))
-        for i in dense_top_idx
-        if int(_fgp_para_ids[i]) not in sumoi_pids
+        (int(r[0]), int(r[1]))
+        for r in vec_rows
+        if int(r[0]) not in sumoi_pids
     ]
 
     return _fgp_dedup(sumoi_ranked + dense_extra, _fgp_fps)
@@ -281,29 +319,29 @@ def _load_api_keys() -> list[str]:
 
 
 _API_KEYS = _load_api_keys()
-_clients: list[genai.Client] = [genai.Client(api_key=k) for k in _API_KEYS]
-_client_lock = threading.Lock()
-_client_idx = 0
-if _clients:
-    logger.info("Gemini configured with %d API key(s)", len(_clients))
+_key_lock = threading.Lock()
+_key_idx = 0
+if _API_KEYS:
+    logger.info("Gemini configured with %d API key(s)", len(_API_KEYS))
+
+_GEMINI_BASE = "https://generativelanguage.googleapis.com/v1beta/models"
 
 
-def _client_order() -> list[genai.Client]:
-    """Return all clients, rotated so each request starts at the next key
-    (round-robin load spreading). Callers iterate the list to fail over to the
-    next key when one is rate-limited/exhausted."""
-    global _client_idx
-    if not _clients:
+def _key_order() -> list[str]:
+    """Return all API keys rotated for round-robin load spreading."""
+    global _key_idx
+    if not _API_KEYS:
         return []
-    with _client_lock:
-        start = _client_idx
-        _client_idx = (_client_idx + 1) % len(_clients)
-    return _clients[start:] + _clients[:start]
+    with _key_lock:
+        start = _key_idx
+        _key_idx = (_key_idx + 1) % len(_API_KEYS)
+    return _API_KEYS[start:] + _API_KEYS[:start]
 
 
 def _is_quota_error(exc: Exception) -> bool:
-    """True for rate-limit / quota-exhausted / transient-overload errors that
-    are worth retrying on a *different* key."""
+    """True for rate-limit / quota-exhausted / transient-overload errors worth retrying on a different key."""
+    if isinstance(exc, httpx.HTTPStatusError):
+        return exc.response.status_code in (429, 503)
     code = getattr(exc, "code", None) or getattr(exc, "status_code", None)
     if code in (429, 503):
         return True
@@ -311,20 +349,57 @@ def _is_quota_error(exc: Exception) -> bool:
     return any(t in msg for t in ("RESOURCE_EXHAUSTED", "RATE_LIMIT", "QUOTA", "UNAVAILABLE", "429", "503"))
 
 
-def _generate_with_rotation(**kwargs):
-    """Run models.generate_content, spreading load across keys and failing over
-    to the next key on a quota/rate error. Raises the last error if all keys
-    fail (the caller's try/except turns that into a 502)."""
-    clients = _client_order()
-    if not clients:
+class _GeminiResponse:
+    __slots__ = ("text",)
+
+    def __init__(self, text: str):
+        self.text = text
+
+
+def _gemini_call(api_key: str, payload: dict) -> "_GeminiResponse":
+    """POST to Gemini generateContent. Raises httpx.HTTPStatusError on non-2xx."""
+    url = f"{_GEMINI_BASE}/{GEMINI_MODEL}:generateContent"
+    resp = httpx.post(url, params={"key": api_key}, json=payload, timeout=60.0)
+    resp.raise_for_status()
+    data = resp.json()
+    try:
+        text = data["candidates"][0]["content"]["parts"][0]["text"]
+    except (KeyError, IndexError):
+        text = ""
+    return _GeminiResponse(text)
+
+
+def _generate_with_rotation(*, model, contents, system_instruction=None,
+                              temperature=None, response_mime_type=None,
+                              max_output_tokens=None):
+    """POST to Gemini generateContent, spreading load across keys with failover."""
+    if isinstance(contents, str):
+        contents_list = [{"role": "user", "parts": [{"text": contents}]}]
+    else:
+        contents_list = list(contents)
+    payload: dict = {"contents": contents_list}
+    if system_instruction:
+        payload["system_instruction"] = {"parts": [{"text": system_instruction}]}
+    gen_config: dict = {}
+    if temperature is not None:
+        gen_config["temperature"] = temperature
+    if response_mime_type:
+        gen_config["responseMimeType"] = response_mime_type
+    if max_output_tokens is not None:
+        gen_config["maxOutputTokens"] = max_output_tokens
+    if gen_config:
+        payload["generationConfig"] = gen_config
+
+    keys = _key_order()
+    if not keys:
         raise RuntimeError("AI service not configured")
     last_exc: Exception | None = None
-    for i, client in enumerate(clients):
+    for i, key in enumerate(keys):
         try:
-            return client.models.generate_content(**kwargs)
-        except Exception as exc:  # noqa: BLE001 — re-raised below
+            return _gemini_call(key, payload)
+        except Exception as exc:  # noqa: BLE001
             last_exc = exc
-            if _is_quota_error(exc) and i < len(clients) - 1:
+            if _is_quota_error(exc) and i < len(keys) - 1:
                 logger.warning("Gemini key %d rate-limited/exhausted; failing over", i + 1)
                 continue
             raise
@@ -332,26 +407,23 @@ def _generate_with_rotation(**kwargs):
 
 
 def _chat_with_rotation(system_prompt: str, history: list, message: str):
-    """Create a chat session and send one message, with the same round-robin +
-    failover behaviour as _generate_with_rotation."""
-    clients = _client_order()
-    if not clients:
+    """Send one chat turn (with history) to Gemini with round-robin key failover."""
+    contents = list(history) + [{"role": "user", "parts": [{"text": message}]}]
+    payload: dict = {
+        "system_instruction": {"parts": [{"text": system_prompt}]},
+        "contents": contents,
+        "generationConfig": {"temperature": _CHAT_TEMPERATURE},
+    }
+    keys = _key_order()
+    if not keys:
         raise RuntimeError("AI service not configured")
     last_exc: Exception | None = None
-    for i, client in enumerate(clients):
+    for i, key in enumerate(keys):
         try:
-            session = client.chats.create(
-                model=GEMINI_MODEL,
-                config=genai_types.GenerateContentConfig(
-                    system_instruction=system_prompt,
-                    temperature=_CHAT_TEMPERATURE,
-                ),
-                history=history,
-            )
-            return session.send_message(message)
-        except Exception as exc:  # noqa: BLE001 — re-raised below
+            return _gemini_call(key, payload)
+        except Exception as exc:  # noqa: BLE001
             last_exc = exc
-            if _is_quota_error(exc) and i < len(clients) - 1:
+            if _is_quota_error(exc) and i < len(keys) - 1:
                 logger.warning("Gemini key %d rate-limited/exhausted; failing over", i + 1)
                 continue
             raise
@@ -412,7 +484,23 @@ class ChatExportRequest(BaseModel):
 
 
 def _build_db() -> sqlite3.Connection:
-    conn = sqlite3.connect(":memory:", check_same_thread=False)
+    # Reuse an existing file DB when the CSV hasn't changed — speeds up local
+    # restarts and lets the OS page out cold pages under memory pressure.
+    if BIBLIO_DB_PATH.exists() and CSV_PATH.exists():
+        try:
+            if BIBLIO_DB_PATH.stat().st_mtime >= CSV_PATH.stat().st_mtime:
+                conn = sqlite3.connect(str(BIBLIO_DB_PATH), check_same_thread=False)
+                conn.row_factory = sqlite3.Row
+                if conn.execute("SELECT COUNT(*) FROM entries").fetchone()[0] > 0:
+                    logger.info("Reusing existing biblio.db")
+                    return conn
+                conn.close()
+        except Exception:
+            pass  # corrupt or schema mismatch — fall through to rebuild
+
+    if BIBLIO_DB_PATH.exists():
+        BIBLIO_DB_PATH.unlink()
+    conn = sqlite3.connect(str(BIBLIO_DB_PATH), check_same_thread=False)
     conn.row_factory = sqlite3.Row
 
     conn.execute("""
@@ -579,14 +667,15 @@ def _validate_model_on_startup() -> None:
     """Ping the configured Gemini model once at boot so a wrong/unavailable model
     ID or a bad key shows up in the deploy logs immediately — not as a generic 502
     on the first user request. Never raises: search must still work if AI is down."""
-    if not _clients:
+    if not _API_KEYS:
         logger.warning("No Gemini API keys configured; AI features (chat, smart search, audit) are disabled.")
         return
     try:
         _generate_with_rotation(
             model=GEMINI_MODEL,
             contents="ping",
-            config=genai_types.GenerateContentConfig(max_output_tokens=1, temperature=0.0),
+            max_output_tokens=1,
+            temperature=0.0,
         )
         logger.info("Gemini model '%s' reachable.", GEMINI_MODEL)
     except Exception as exc:  # noqa: BLE001 — diagnostic only, must not block startup
@@ -630,7 +719,7 @@ def stats():
         # Number of configured Gemini keys (count only — never the key values).
         # Lets the deployment confirm multi-key rotation took effect without
         # reading Railway logs.
-        "ai_keys": len(_clients),
+        "ai_keys": len(_API_KEYS),
     }
 
 
@@ -646,8 +735,8 @@ def health():
     return {
         "status": "ok" if n > 0 else "degraded",
         "db_entries": n,
-        "ai_configured": bool(_clients),
-        "ai_keys": len(_clients),
+        "ai_configured": bool(_API_KEYS),
+        "ai_keys": len(_API_KEYS),
         "model": GEMINI_MODEL,
         "corpus_last_updated": CORPUS_LAST_UPDATED,
     }
@@ -880,7 +969,7 @@ def _structure_query(nl: str, allowed_types: list[str]) -> Optional[dict]:
     """Ask Gemini to turn a natural-language query into a structured spec.
     Returns None on any failure so the caller can fall back to plain search.
     Results are cached per query string."""
-    if not _clients or not nl.strip():
+    if not _API_KEYS or not nl.strip():
         return None
 
     key = nl.strip().lower()
@@ -896,10 +985,8 @@ def _structure_query(nl: str, allowed_types: list[str]) -> Optional[dict]:
         resp = _generate_with_rotation(
             model=GEMINI_MODEL,
             contents=prompt,
-            config=genai_types.GenerateContentConfig(
-                temperature=_SMART_SEARCH_TEMPERATURE,
-                response_mime_type="application/json",
-            ),
+            temperature=_SMART_SEARCH_TEMPERATURE,
+            response_mime_type="application/json",
         )
         spec = _parse_json(resp.text)
     except Exception:  # noqa: BLE001 — any failure -> fall back to plain search
@@ -1727,7 +1814,7 @@ def _dedupe_entries(entries: list[dict]) -> list[dict]:
 
 @app.post("/api/chat")
 def chat(req: ChatRequest):
-    if not _clients:
+    if not _API_KEYS:
         return JSONResponse(status_code=503, content={"error": "AI service not configured."})
 
     # Input guards: keep prompt size and per-session cost bounded regardless of
@@ -1759,7 +1846,7 @@ def chat(req: ChatRequest):
     system_prompt = _build_system_prompt(entries)
 
     gemini_history = [
-        genai_types.Content(role=m.role, parts=[genai_types.Part(text=m.content)])
+        {"role": m.role, "parts": [{"text": m.content}]}
         for m in history
     ]
     try:
@@ -2041,11 +2128,9 @@ def _parse_citations(text: str) -> list[str]:
         resp = _generate_with_rotation(
             model=GEMINI_MODEL,
             contents=text,
-            config=genai_types.GenerateContentConfig(
-                system_instruction=_PARSE_SYSTEM_PROMPT,
-                response_mime_type="application/json",
-                temperature=0.0,
-            ),
+            system_instruction=_PARSE_SYSTEM_PROMPT,
+            response_mime_type="application/json",
+            temperature=0.0,
         )
         data = _parse_json(resp.text)
     except Exception:
@@ -2058,7 +2143,7 @@ def _parse_citations(text: str) -> list[str]:
 
 @app.post("/api/audit")
 def audit(req: AuditRequest):
-    if not _clients:
+    if not _API_KEYS:
         return JSONResponse(status_code=503, content={"error": "AI service not configured."})
 
     bib = (req.bibliography or "").strip()
@@ -2086,11 +2171,9 @@ def audit(req: AuditRequest):
         response = _generate_with_rotation(
             model=GEMINI_MODEL,
             contents=user_content,
-            config=genai_types.GenerateContentConfig(
-                system_instruction=_AUDIT_SYSTEM_PROMPT,
-                response_mime_type="application/json",
-                temperature=0.2,
-            ),
+            system_instruction=_AUDIT_SYSTEM_PROMPT,
+            response_mime_type="application/json",
+            temperature=0.2,
         )
         data = _parse_json(response.text)
     except Exception:
@@ -2127,8 +2210,8 @@ def audit(req: AuditRequest):
 @app.get("/api/ask-primary/status")
 def ask_primary_status():
     return {
-        "enabled": _fgp_ready and bool(_clients),
-        "paragraphs": int(_fgp_mat.shape[0]) if _fgp_mat is not None else 0,
+        "enabled": _fgp_ready and bool(_API_KEYS),
+        "paragraphs": _fgp_para_count,
         "oi_summaries": int(_fgp_sum_mat.shape[0]) if _fgp_sum_mat is not None else 0,
     }
 
@@ -2137,7 +2220,7 @@ def ask_primary_status():
 def ask_primary(req: FGPAskRequest):
     if not _fgp_ready:
         return JSONResponse(status_code=503, content={"error": "Ask the Primary Sources is warming up — please try again in a moment."})
-    if not _clients:
+    if not _API_KEYS:
         return JSONResponse(status_code=503, content={"error": "AI service not configured."})
 
     message = (req.message or "").strip()
@@ -2161,25 +2244,29 @@ def ask_primary(req: FGPAskRequest):
         logger.exception("Voyage embedding failed for ask-primary")
         return JSONResponse(status_code=502, content={"error": "Retrieval service failed. Please try again."})
 
-    ranked = _fgp_retrieve(qv)
-    seen_pass: set = set()
-    passage_order: list = []
-    paras_by_pass: dict = {}
-    for pid, passid in ranked:
-        if passid not in seen_pass:
-            seen_pass.add(passid)
-            passage_order.append(passid)
-            paras_by_pass[passid] = []
-        if len(passage_order) <= _FGP_PASSAGES:
-            paras_by_pass[passid].append(pid)
-    passage_order = passage_order[:_FGP_PASSAGES]
-
-    if not passage_order:
-        return {"answer": _FGP_INSUFFICIENT, "citations": [], "sources_count": 0, "cited_count": 0}
-
-    con = sqlite3.connect(FGP_DB_PATH)
+    # Open one connection for both vector retrieval and passage text fetching
+    con = sqlite3.connect(str(FGP_DB_PATH))
     con.row_factory = sqlite3.Row
+    con.enable_load_extension(True)
+    _svec.load(con)
+    con.enable_load_extension(False)
     try:
+        ranked = _fgp_retrieve(qv, con)
+        seen_pass: set = set()
+        passage_order: list = []
+        paras_by_pass: dict = {}
+        for pid, passid in ranked:
+            if passid not in seen_pass:
+                seen_pass.add(passid)
+                passage_order.append(passid)
+                paras_by_pass[passid] = []
+            if len(passage_order) <= _FGP_PASSAGES:
+                paras_by_pass[passid].append(pid)
+        passage_order = passage_order[:_FGP_PASSAGES]
+
+        if not passage_order:
+            return {"answer": _FGP_INSUFFICIENT, "citations": [], "sources_count": 0, "cited_count": 0}
+
         passages = []
         for passid in passage_order:
             p = con.execute(
@@ -2210,7 +2297,7 @@ def ask_primary(req: FGPAskRequest):
 
     system_prompt = _fgp_build_prompt(passages)
     gem_history = [
-        genai_types.Content(role=m.role, parts=[genai_types.Part(text=m.content)])
+        {"role": m.role, "parts": [{"text": m.content}]}
         for m in req.history[-_FGP_MAX_HIST:]
     ]
     try:
