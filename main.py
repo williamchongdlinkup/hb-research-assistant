@@ -48,7 +48,6 @@ _fgp_sum_mat:      object = None   # np.ndarray (M, 1024) — OI summary embeddi
 _fgp_sum_pass_ids: object = None
 _fgp_para_counts:  dict   = {}
 _fgp_fps:          dict   = {}
-_fgp_vc:           object = None   # voyageai.Client
 _fgp_ready:        bool   = False
 
 try:
@@ -65,14 +64,18 @@ except ImportError:
 
 
 def _build_vec_index(con: sqlite3.Connection) -> None:
-    """Populate vec_paragraphs from the embeddings table. Runs once per fresh container."""
+    """Populate vec_paragraphs from the embeddings table. Runs once per fresh container.
+    Streams rows one at a time to avoid loading all 60 MB of blobs into Python heap at once."""
     import struct
     con.execute("CREATE VIRTUAL TABLE vec_paragraphs USING vec0(embedding float[1024])")
-    rows = con.execute("SELECT para_id, vector FROM embeddings ORDER BY para_id").fetchall()
     batch: list = []
-    for para_id, blob in rows:
+    n = 0
+    for para_id, blob in con.execute(
+        "SELECT para_id, vector FROM embeddings ORDER BY para_id"
+    ):
         floats = struct.unpack(f"{len(blob) // 4}f", blob)
         batch.append((para_id, _svec_ser(floats)))
+        n += 1
         if len(batch) == 500:
             con.executemany(
                 "INSERT INTO vec_paragraphs(rowid, embedding) VALUES (?, ?)", batch
@@ -83,14 +86,14 @@ def _build_vec_index(con: sqlite3.Connection) -> None:
             "INSERT INTO vec_paragraphs(rowid, embedding) VALUES (?, ?)", batch
         )
     con.commit()
-    logger.info("vec_paragraphs built: %d rows", len(rows))
+    logger.info("vec_paragraphs built: %d rows", n)
 
 
 def _load_fgp() -> None:
     """Verify foguangpedia.db is ready and load the small in-memory structures."""
     global _fgp_para_count
     global _fgp_sum_mat, _fgp_sum_pass_ids
-    global _fgp_para_counts, _fgp_fps, _fgp_vc, _fgp_ready
+    global _fgp_para_counts, _fgp_fps, _fgp_ready
 
     if not FGP_DB_PATH.exists():
         logger.warning("foguangpedia.db not found at %s; /primarysources disabled", FGP_DB_PATH)
@@ -104,12 +107,6 @@ def _load_fgp() -> None:
         return
     if _svec is None:
         logger.warning("sqlite-vec not installed; /primarysources disabled")
-        return
-    try:
-        import voyageai as _vai
-        _fgp_vc = _vai.Client(api_key=voyage_key)
-    except ImportError:
-        logger.warning("voyageai not installed; /primarysources disabled")
         return
 
     con = sqlite3.connect(str(FGP_DB_PATH))
@@ -2265,9 +2262,16 @@ def ask_primary(req: FGPAskRequest):
 
     rq = _fgp_retrieval_query(message, req.history)
 
+    voyage_key = os.environ.get("VOYAGE_API_KEY", "").strip()
     try:
-        result = _fgp_vc.embed([rq], model=_FGP_VOYAGE_MODEL, input_type="query")
-        qv = _np.array(result.embeddings[0], dtype=_np.float32)
+        resp = httpx.post(
+            "https://api.voyageai.com/v1/embeddings",
+            headers={"Authorization": f"Bearer {voyage_key}"},
+            json={"model": _FGP_VOYAGE_MODEL, "input": [rq], "input_type": "query"},
+            timeout=30.0,
+        )
+        resp.raise_for_status()
+        qv = _np.array(resp.json()["data"][0]["embedding"], dtype=_np.float32)
         qv = qv / (float(_np.linalg.norm(qv)) or 1.0)
     except Exception:
         logger.exception("Voyage embedding failed for ask-primary")
